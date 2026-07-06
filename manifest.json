@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "김대필 (ContextWrite)",
+  "version": "1.0.0",
+  "description": "사용자의 웹서핑 맥락을 감지하고, 자연스러운 인간의 글로 AI 초안을 변환하는 AI 글쓰기 비서",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "김대필 실행/닫기"
+  }
+}

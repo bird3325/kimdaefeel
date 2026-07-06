@@ -1,0 +1,389 @@
+/* 김대필 (ContextWrite) Content Script Stylesheet */
+
+/* 1. 미니 플로팅 버튼 스타일 */
+.cdp-floating-btn {
+  position: absolute;
+  z-index: 10000000;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: #1E40AF; /* Primary Color */
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), background-color 0.2s;
+  pointer-events: auto;
+}
+
+.cdp-floating-btn:hover {
+  transform: scale(1.15);
+  background-color: #0D9488; /* Secondary Color */
+}
+
+.cdp-floating-btn img {
+  width: 14px;
+  height: 14px;
+  filter: invert(1); /* 파란색/민트색 배경 위에서 흰색 아이콘으로 보이도록 처리 */
+}
+
+/* 2. 슬라이드인 사이드바 컨테이너 */
+.cdp-sidebar-container {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 380px;
+  height: 100vh;
+  background-color: #FFFFFF;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+  z-index: 9999999;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  font-family: Arial, sans-serif;
+  color: #1F2937;
+  box-sizing: border-box;
+}
+
+.cdp-sidebar-container.cdp-open {
+  transform: translateX(0);
+}
+
+/* 3. 헤더 영역 */
+.cdp-header {
+  padding: 16px;
+  background-color: #1E40AF;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.cdp-header-title {
+  font-size: 16px;
+  font-weight: bold;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cdp-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* 토글 스위치 */
+.cdp-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.cdp-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cdp-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #9CA3AF;
+  transition: .3s;
+  border-radius: 20px;
+}
+
+.cdp-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .3s;
+  border-radius: 50%;
+}
+
+input:checked + .cdp-slider {
+  background-color: #0D9488;
+}
+
+input:checked + .cdp-slider:before {
+  transform: translateX(16px);
+}
+
+.cdp-close-btn {
+  background: none;
+  border: none;
+  color: #FFFFFF;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  margin-left: 10px;
+}
+
+/* 4. 사이드바 바디 (스크롤 가능 영역) */
+.cdp-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background-color: #F9FAFB;
+}
+
+/* 공통 섹션 카드 스타일 (여백을 활용한 구획 구분) */
+.cdp-section {
+  background-color: #FFFFFF;
+  border-radius: 8px;
+  padding: 14px;
+  border: 1px solid #E5E7EB;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.cdp-section-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: #1F2937;
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+/* 5. 모드 셀렉터 */
+.cdp-select {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid #E5E7EB;
+  background-color: #FFFFFF;
+  color: #1F2937;
+  outline: none;
+  cursor: pointer;
+}
+
+.cdp-select:focus {
+  border-color: #1E40AF;
+}
+
+/* 6. 에디터 영역 (비교 뷰) */
+.cdp-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cdp-textarea-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cdp-label {
+  font-size: 12px;
+  font-weight: bold;
+  color: #4B5563;
+}
+
+.cdp-textarea {
+  width: 100%;
+  height: 90px;
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 1.25; /* 본문 텍스트 영역의 줄 간격 1.25 고정 */
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  resize: none;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.cdp-textarea:focus {
+  border-color: #1E40AF;
+}
+
+/* 비교 뷰 - 변환 결과 영역 */
+.cdp-result-view {
+  min-height: 90px;
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 1.25; /* 줄 간격 1.25 고정 */
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  background-color: #FFFFFF;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-sizing: border-box;
+}
+
+/* 어휘 변환 하이라이팅 */
+.cdp-highlight {
+  background-color: rgba(13, 148, 136, 0.1); /* 연한 민트색 배경색 */
+  border-bottom: 1px dashed #0D9488;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
+/* 자연화 레벨 버튼 그룹 */
+.cdp-level-group {
+  display: flex;
+  gap: 8px;
+}
+
+.cdp-level-btn {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 12px;
+  border: 1px solid #E5E7EB;
+  background-color: #FFFFFF;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cdp-level-btn.cdp-active {
+  background-color: #1E40AF;
+  color: #FFFFFF;
+  border-color: #1E40AF;
+}
+
+.cdp-level-btn.cdp-active-mint {
+  background-color: #0D9488;
+  color: #FFFFFF;
+  border-color: #0D9488;
+}
+
+/* 7. 분석 대시보드 */
+.cdp-gauge-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cdp-gauge-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cdp-gauge-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #4B5563;
+}
+
+.cdp-gauge-bar-bg {
+  width: 100%;
+  height: 8px;
+  background-color: #E5E7EB;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cdp-gauge-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 4px;
+  transition: width 0.5s ease-out, background-color 0.3s;
+}
+
+/* 안전 영역 녹색, 위험 영역 적색 */
+.cdp-gauge-green {
+  background-color: #10B981;
+}
+
+.cdp-gauge-red {
+  background-color: #EF4444;
+}
+
+/* 8. 프로필 학습 패널 */
+.cdp-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cdp-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.cdp-input:focus {
+  border-color: #1E40AF;
+}
+
+/* 9. 푸터 영역 (액션 버튼) */
+.cdp-footer {
+  padding: 16px;
+  border-top: 1px solid #E5E7EB;
+  background-color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cdp-primary-btn {
+  width: 100%;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  background-color: #0D9488; /* Humanize Mint 강조 컬러 */
+  color: #FFFFFF;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  text-align: center;
+}
+
+.cdp-primary-btn:hover {
+  background-color: #0B7A70;
+}
+
+.cdp-secondary-btn {
+  width: 100%;
+  padding: 8px 0;
+  font-size: 12px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  background-color: #FFFFFF;
+  color: #4B5563;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.cdp-secondary-btn:hover {
+  background-color: #F9FAFB;
+  border-color: #D1D5DB;
+}
+
+.cdp-btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+.cdp-btn-row button {
+  flex: 1;
+}
