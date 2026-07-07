@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>김대필 (ContextWrite)</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #F8FAFC;
+      font-family: 'Outfit', 'Noto Sans KR', sans-serif;
+      color: #0F172A;
+      box-sizing: border-box;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 헤더 */
+    .cdp-header {
+      padding: 14px 16px;
+      background: linear-gradient(135deg, #1E40AF 0%, #1e3a8a 50%, #0F172A 100%);
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+      box-sizing: border-box;
+      gap: 12px;
+    }
+    .cdp-header-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .cdp-header-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .cdp-header-controls span {
+      white-space: nowrap;
+    }
+    #cdp-confidence-badge {
+      white-space: nowrap;
+      display: inline-block;
+    }
+    .cdp-icon-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: #FFFFFF;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.25s ease;
+      flex-shrink: 0;
+    }
+    .cdp-icon-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+      transform: scale(1.08);
+    }
+
+    /* 바디 */
+    .cdp-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .cdp-section {
+      background: #FFFFFF;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.02);
+      border: 1px solid rgba(226, 232, 240, 0.8);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.3s;
+    }
+    .cdp-section:hover {
+      border-color: rgba(30, 64, 175, 0.15);
+    }
+    .cdp-section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #1E40AF;
+      margin: 0 0 4px 0;
+    }
+
+    /* 모드 셀렉트 */
+    .cdp-select {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1.5px solid #E2E8F0;
+      border-radius: 8px;
+      background-color: #FFFFFF;
+      outline: none;
+      transition: all 0.3s;
+      cursor: pointer;
+      color: #1E293B;
+    }
+    .cdp-select:focus {
+      border-color: #1E40AF;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+    }
+
+    /* 라벨 및 입력창 */
+    .cdp-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748B;
+    }
+    .cdp-input, .cdp-textarea {
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      box-sizing: border-box;
+      outline: none;
+      transition: all 0.2s;
+      color: #334155;
+      background-color: #FCFDFE;
+    }
+    .cdp-input:focus, .cdp-textarea:focus {
+      border-color: #1E40AF;
+      background-color: #FFFFFF;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+    }
+    .cdp-textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    .cdp-textarea-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    /* 강도 선택 그룹 */
+    .cdp-level-group {
+      display: flex;
+      gap: 6px;
+      background-color: #F1F5F9;
+      padding: 4px;
+      border-radius: 8px;
+    }
+    .cdp-level-btn {
+      flex: 1;
+      padding: 8px 0;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #64748B;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      font-family: inherit;
+    }
+    .cdp-level-btn.cdp-active {
+      background-color: #FFFFFF;
+      color: #1E40AF;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+    }
+    .cdp-level-btn.cdp-active-mint {
+      background-color: #0D9488;
+      color: #FFFFFF;
+      box-shadow: 0 2px 6px rgba(13, 148, 136, 0.2);
+    }
+
+    /* 결과 뷰 */
+    .cdp-result-view {
+      min-height: 90px;
+      padding: 12px;
+      font-size: 13.5px;
+      line-height: 1.6;
+      border: 1px dashed #CBD5E1;
+      border-radius: 8px;
+      background-color: #F8FAFC;
+      color: #334155;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .cdp-highlight {
+      background-color: rgba(20, 184, 166, 0.15);
+      border-bottom: 2px solid rgba(20, 184, 166, 0.4);
+      padding: 0 2px;
+      border-radius: 2px;
+      font-weight: 500;
+      color: #0F766E;
+    }
+
+    /* 분석 대시보드 */
+    .cdp-gauge-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .cdp-gauge-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .cdp-gauge-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+    }
+    .cdp-gauge-bar-bg {
+      width: 100%;
+      height: 6px;
+      background-color: #F1F5F9;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .cdp-gauge-bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 10px;
+      transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .cdp-gauge-green {
+      background: linear-gradient(90deg, #10B981, #059669);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
+    }
+    .cdp-gauge-red {
+      background: linear-gradient(90deg, #F43F5E, #E11D48);
+      box-shadow: 0 0 8px rgba(244, 63, 94, 0.2);
+    }
+
+    /* 푸터 */
+    .cdp-footer {
+      padding: 18px 16px;
+      border-top: 1px solid rgba(226, 232, 240, 0.8);
+      background-color: #FFFFFF;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.02);
+    }
+    .cdp-primary-btn {
+      width: 100%;
+      padding: 12px 0;
+      font-size: 14px;
+      font-weight: 700;
+      font-family: inherit;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #0D9488 0%, #0F766E 100%);
+      color: #FFFFFF;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2);
+      text-align: center;
+    }
+    .cdp-primary-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(13, 148, 136, 0.35);
+    }
+    .cdp-secondary-btn {
+      width: 100%;
+      padding: 10px 0;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      background-color: #FFFFFF;
+      color: #475569;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .cdp-secondary-btn:hover {
+      background-color: #F8FAFC;
+      border-color: #CBD5E1;
+      color: #1E293B;
+    }
+    .cdp-btn-row {
+      display: flex;
+      gap: 8px;
+    }
+    .cdp-btn-row button {
+      flex: 1;
+    }
+
+    /* 로딩 상태 스타일 */
+    .cdp-loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 30px 10px;
+      gap: 12px;
+      color: #0D9488;
+    }
+    .cdp-spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #E2E8F0;
+      border-top-color: #0D9488;
+      border-radius: 50%;
+      animation: cdp-spin 0.8s linear infinite;
+    }
+    .cdp-progress-bar-container {
+      width: 80%;
+      height: 6px;
+      background-color: #E2E8F0;
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+    .cdp-progress-bar-fill {
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(90deg, #0D9488, #0F766E);
+      border-radius: 3px;
+      position: absolute;
+      left: 0;
+      top: 0;
+      animation: cdp-progress-anim 1.5s infinite ease-in-out;
+    }
+
+    @keyframes cdp-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes cdp-progress-anim {
+      0% { left: -40%; }
+      50% { left: 40%; width: 60%; }
+      100% { left: 100%; }
+    }
+
+    /* 최근 변환 내역 아이템 스타일 */
+    .cdp-history-item {
+      background-color: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all 0.2s;
+      margin-bottom: 6px;
+    }
+    .cdp-history-item:hover {
+      background-color: #F1F5F9;
+      border-color: #CBD5E1;
+    }
+    .cdp-history-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #64748B;
+    }
+    .cdp-history-badge {
+      font-size: 10px;
+      font-weight: bold;
+      color: #ffffff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .cdp-history-badge.resume { background: #1E40AF; }
+    .cdp-history-badge.email { background: #0D9488; }
+    .cdp-history-badge.sns { background: #BE185D; }
+    
+    .cdp-history-body {
+      font-size: 12px;
+      color: #334155;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .cdp-history-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .cdp-history-btn {
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      background-color: #ffffff;
+      color: #475569;
+      padding: 2px 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .cdp-history-btn:hover {
+      background-color: #F8FAFC;
+      border-color: #CBD5E1;
+      color: #0F172A;
+    }
+
+    /* 프로필 폼 */
+    .cdp-profile-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* 토글 스위치 */
+    .cdp-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+    }
+    .cdp-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .cdp-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(255, 255, 255, 0.3);
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 30px;
+      backdrop-filter: blur(4px);
+    }
+    .cdp-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    input:checked + .cdp-slider {
+      background-color: #0D9488;
+    }
+    input:checked + .cdp-slider:before {
+      transform: translateX(18px);
+    }
+  </style>
+</head>
+<body>
+  <!-- 헤더 -->
+  <div class="cdp-header">
+    <h3 class="cdp-header-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: middle;">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+      </svg>
+      김대필 (새창 모드)
+    </h3>
+    <div class="cdp-header-controls">
+      <span>자동 모드</span>
+      <label class="cdp-switch">
+        <input type="checkbox" id="cdp-auto-toggle" checked>
+        <span class="cdp-slider"></span>
+      </label>
+      <button class="cdp-icon-btn" id="cdp-settings-btn" title="AI 서비스/API 키 설정">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 바디 -->
+  <div class="cdp-body">
+    <!-- 1. 모드 셀렉터 -->
+    <div class="cdp-section">
+      <p class="cdp-section-title">작성 컨텍스트 모드</p>
+      <select class="cdp-select" id="cdp-mode-select">
+        <option value="resume">이력서/자소서 모드</option>
+        <option value="email">비즈니스 이메일 모드</option>
+        <option value="sns">블로그/SNS 모드</option>
+      </select>
+    </div>
+
+    <!-- 2. 개인 맞춤형 프로필 학습 -->
+    <div class="cdp-section">
+      <p class="cdp-section-title">개인 맞춤형 프로필 학습</p>
+      <div class="cdp-profile-form">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label class="cdp-label">AI 페르소나 설정</label>
+          <select class="cdp-select" id="cdp-profile-persona" style="padding: 6px 10px; font-size: 13px; box-sizing: border-box; line-height: 1.5;">
+            <option value="professor">국어국문학과 교수 (어휘·문법 정밀 교정)</option>
+            <option value="recruiter">글로벌 IT 기업 인사담당자 (자소서·성과 강조)</option>
+            <option value="copywriter">트렌디한 카피라이터 (설득력 있는 메일·광고)</option>
+            <option value="influencer">친근한 파워 인플루언서 (소통 어조 및 이모지)</option>
+          </select>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label class="cdp-label" id="cdp-label-tone">원하는 말투/톤</label>
+          <input type="text" class="cdp-input" id="cdp-profile-tone" placeholder="예: 정중하고 부드러운 격식체">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label class="cdp-label" id="cdp-label-exp">경력 및 백그라운드</label>
+          <input type="text" class="cdp-input" id="cdp-profile-exp" placeholder="예: 3년차 프론트엔드 개발자">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label class="cdp-label" id="cdp-label-episode">핵심 강점/에피소드</label>
+          <textarea class="cdp-textarea" id="cdp-profile-episode" placeholder="자주 녹여내고 싶은 나만의 핵심 에피소드나 키워드를 적어주세요." style="height: 60px; font-size:12px;"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 에디터 영역 (비교 뷰) -->
+    <div class="cdp-section">
+      <p class="cdp-section-title">AI 초안 자연화 (Humanize)</p>
+      
+      <div class="cdp-textarea-wrapper">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label class="cdp-label">Original AI 초안</label>
+          <span id="cdp-orig-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+        </div>
+        <textarea class="cdp-textarea" id="cdp-original-input" placeholder="여기에 어색한 AI 초안을 입력하거나 문장을 작성하세요."></textarea>
+      </div>
+
+      <div class="cdp-textarea-wrapper">
+        <label class="cdp-label">추가 개선 요청사항 (선택)</label>
+        <input type="text" class="cdp-input" id="cdp-custom-instruction" placeholder="예: 좀 더 열정적인 어조로 써줘, 구체적 성과 위주로 다듬어줘 등" style="font-size: 12.5px;">
+      </div>
+
+      <div class="cdp-textarea-wrapper">
+        <label class="cdp-label">자연화 강도 설정</label>
+        <div class="cdp-level-group">
+          <button class="cdp-level-btn cdp-active" data-level="light">Light (가벼움)</button>
+          <button class="cdp-level-btn" data-level="medium">Medium (보통)</button>
+          <button class="cdp-level-btn" data-level="strong">Strong (강함)</button>
+        </div>
+      </div>
+
+      <div class="cdp-textarea-wrapper">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label class="cdp-label">목표 글자수 제한 (공백 포함)</label>
+          <input type="number" id="cdp-char-limit-input" placeholder="제한 없음 (예: 500)" style="width: 120px; padding: 4px 8px; font-size: 12px; border: 1px solid #E5E7EB; border-radius: 4px; outline: none; box-sizing: border-box;">
+        </div>
+      </div>
+
+      <div class="cdp-textarea-wrapper">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label class="cdp-label">Humanized 결과 (민트색: 개선된 문맥)</label>
+          <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+        </div>
+        <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.</div>
+      </div>
+    </div>
+
+    <!-- 4. 분석 대시보드 -->
+    <div class="cdp-section">
+      <p class="cdp-section-title">AI 탐지 및 매칭 대시보드</p>
+      <div class="cdp-gauge-container">
+        <!-- AI 탐지 점수 -->
+        <div class="cdp-gauge-item">
+          <div class="cdp-gauge-header">
+            <span>AI 탐지 예측 점수 (낮을수록 안전)</span>
+            <span id="cdp-ai-score-val">-</span>
+          </div>
+          <div class="cdp-gauge-bar-bg">
+            <div class="cdp-gauge-bar-fill cdp-gauge-red" id="cdp-ai-score-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+        <!-- ATS 매칭 점수 -->
+        <div class="cdp-gauge-item">
+          <div class="cdp-gauge-header">
+            <span>ATS 매칭 적합도 (높을수록 우수)</span>
+            <span id="cdp-ats-score-val">-</span>
+          </div>
+          <div class="cdp-gauge-bar-bg">
+            <div class="cdp-gauge-bar-fill cdp-gauge-green" id="cdp-ats-score-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. 최근 변환 내역 -->
+    <div class="cdp-section">
+      <p class="cdp-section-title">최근 변환 내역</p>
+      <div id="cdp-history-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding-right: 4px;">
+        <div style="font-size: 12px; color: #64748B; text-align: center; padding: 10px 0;">로딩 중...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 푸터 -->
+  <div class="cdp-footer">
+    <button class="cdp-primary-btn" id="cdp-insert-btn">웹페이지에 즉시 삽입</button>
+    <div class="cdp-btn-row">
+      <button class="cdp-secondary-btn" id="cdp-docx-btn">DOCX 다운로드</button>
+      <button class="cdp-secondary-btn" id="cdp-transform-btn" style="background-color: #1E40AF; color: white; border: none;">자연화 변환</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

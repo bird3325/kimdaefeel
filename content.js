@@ -5,6 +5,7 @@ let debounceTimer = null;      // 맥락 감지용 디바운스 타이머
 let latestHumanizedText = '';  // 가장 최근에 변환 완료된 텍스트
 let isAutoModeEnabled = true;  // 자동 모드 스위칭 활성화 여부
 let currentDetectedMode = 'resume';
+let globalConfidences = { resume: 0, email: 0, sns: 0 };
 
 // 1. 미니 플로팅 아이콘 및 사이드바 인스턴스
 let floatingBtn = null;
@@ -26,7 +27,7 @@ function onDomReady() {
   // 포커스 감지 이벤트 등록
   document.addEventListener('focusin', handleFocusIn);
   document.addEventListener('focusout', handleFocusOut);
-  
+
   // 윈도우 리사이즈 및 스크롤 시 플로팅 버튼 위치 업데이트
   window.addEventListener('resize', updateFloatingBtnPosition);
   window.addEventListener('scroll', updateFloatingBtnPosition, true);
@@ -34,7 +35,28 @@ function onDomReady() {
   // 백그라운드 서비스 워커로부터 메시지 수신 (사이드바 토글 등)
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'toggle-sidebar') {
-      toggleSidebar();
+      if (window === window.top) toggleSidebar();
+    } else if (message.action === 'sync-sidebar-from-iframe') {
+      if (window === window.top) {
+        const shadow = sidebarRoot ? sidebarRoot.shadowRoot : null;
+        if (shadow) {
+          const origInput = shadow.getElementById('cdp-original-input');
+          if (origInput) {
+            origInput.value = message.text;
+            origInput.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
+        openSidebar();
+        showNotification('선택한 입력창의 텍스트가 AI 초안에 추가되었습니다.');
+      }
+    } else if (message.action === 'insert-text') {
+      if (message.text) {
+        insertTextToActiveElement(message.text);
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: '삽입할 텍스트가 없습니다.' });
+      }
+      return false;
     }
   });
 
@@ -45,16 +67,66 @@ function onDomReady() {
 /**
  * 1. 입력창 포커스 감지 및 500ms 디바운스
  */
-function handleFocusIn(e) {
-  const el = e.target;
+function isRecipientOrSubjectField(el) {
+  if (!el) return false;
+
+  // 1. 높이 기준 필터링 (메일 에디터나 자소서 본문창은 최소 60px 이상입니다)
+  const rect = el.getBoundingClientRect();
+  if (rect.height > 0 && rect.height < 60) {
+    return true;
+  }
+
+  // 2. 키워드 검사 대상 문자열 취합
+  const id = (el.id || '').toLowerCase();
+  const className = (el.className || '').toLowerCase();
+  const name = (el.getAttribute('name') || '').toLowerCase();
+  const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
+  const role = (el.getAttribute('role') || '').toLowerCase();
   
+  // 부모 노드의 클래스/ID도 확인 (Daum/Naver 메일의 주소 래퍼 클래스 확인용)
+  const parentClass = el.parentElement ? (el.parentElement.className || '').toLowerCase() : '';
+  const parentId = el.parentElement ? (el.parentElement.id || '').toLowerCase() : '';
+
+  const searchStr = `${id} ${className} ${name} ${placeholder} ${role} ${parentClass} ${parentId}`;
+  
+  const ignoreKeywords = [
+    'receiver', 'recipient', 'to', 'cc', 'bcc', 'address', 'addr', 'contact', 
+    'member', 'writer', 'subject', 'title', 'tag', 'token',
+    '받는', '보내는', '참조', '제목', '한줄', '받는이', '보내는이'
+  ];
+
+  return ignoreKeywords.some(kw => searchStr.includes(kw));
+}
+
+/**
+ * 1. 입력창 포커스 감지 및 500ms 디바운스
+ */
+function handleFocusIn(e) {
+  let el = e.target;
+
   // 비밀번호 입력창 및 민감 입력창 무시
   if (el.tagName === 'INPUT' && el.type === 'password') {
     hideFloatingButton();
     return;
   }
 
-  if (el.tagName === 'TEXTAREA' || el.isContentEditable || (el.tagName === 'INPUT' && el.type === 'text')) {
+  // 부모 엘리먼트 중 contenteditable="true"가 있는지 확인하여 에디터 대응성 향상
+  const editableParent = el.closest('[contenteditable="true"]');
+  if (editableParent) {
+    el = editableParent;
+  }
+
+  // 받는 사람, 제목창 등 메일 주소/메타 입력 필드 제외
+  if (isRecipientOrSubjectField(el)) {
+    hideFloatingButton();
+    return;
+  }
+
+  // textarea 및 웹사이트 상의 다양한 글작성 에디터(Rich Text Editor, contenteditable 영역 등)에서만 감지
+  const isTextarea = el.tagName === 'TEXTAREA';
+  const isEditable = el.isContentEditable;
+
+  if (isTextarea || isEditable) {
     activeInputEl = el;
 
     // 500ms 디바운스 적용 후 백그라운드로 맥락 분석 요청
@@ -76,15 +148,75 @@ function handleFocusOut(e) {
 }
 
 /**
+ * 페이지 내 입력 필드의 글자수 제한을 감지하는 헬퍼 함수
+ */
+function detectCharacterLimit(el) {
+  if (!el) return null;
+
+  // 1. HTML5 표준 maxlength 속성 확인
+  const maxLenAttr = el.getAttribute('maxlength') || el.maxLength;
+  if (maxLenAttr && maxLenAttr > 0 && maxLenAttr < 100000) {
+    return parseInt(maxLenAttr, 10);
+  }
+
+  // 2. 주변 DOM에서 글자수 제한 관련 텍스트 탐색 (예: "0 / 1000", "최대 500자" 등)
+  const parent = el.parentElement;
+  if (parent) {
+    const siblings = parent.querySelectorAll('*');
+    for (let sib of siblings) {
+      if (sib === el) continue;
+      const textContent = sib.innerText || sib.textContent || '';
+      
+      // 패턴 1: / 1,000자, /1000, / 500
+      const slashPattern = /\/\s*([0-9,]+)\s*(자)?/i;
+      const slashMatch = textContent.match(slashPattern);
+      if (slashMatch) {
+        const val = parseInt(slashMatch[1].replace(/,/g, ''), 10);
+        if (val > 0 && val < 50000) return val;
+      }
+
+      // 패턴 2: 최대 1,000자, 1000자 제한, 500자 이하
+      const limitPattern = /([0-9,]+)\s*자\s*(제한|이하|내|최대|미만)/i;
+      const limitMatch = textContent.match(limitPattern);
+      if (limitMatch) {
+        const val = parseInt(limitMatch[1].replace(/,/g, ''), 10);
+        if (val > 0 && val < 50000) return val;
+      }
+
+      // 패턴 3: 최대 1000자
+      const maxPattern = /최대\s*([0-9,]+)\s*자/i;
+      const maxMatch = textContent.match(maxPattern);
+      if (maxMatch) {
+        const val = parseInt(maxMatch[1].replace(/,/g, ''), 10);
+        if (val > 0 && val < 50000) return val;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * 2. 주변 컨텍스트 수집 및 백그라운드 전송
  */
 function detectContextAndSync(el) {
   if (!el) return;
 
+  // 실시간 글자수 제한 자동 감지 및 입력박스 반영
+  if (sidebarRoot && sidebarRoot.shadowRoot) {
+    const limitInput = sidebarRoot.shadowRoot.getElementById('cdp-char-limit-input');
+    if (limitInput) {
+      const detectedLimit = detectCharacterLimit(el);
+      if (detectedLimit) {
+        limitInput.value = detectedLimit;
+      }
+    }
+  }
+
   const url = window.location.href;
   const title = document.title;
   const placeholder = el.placeholder || el.getAttribute('placeholder') || '';
-  
+
   // 레이블 텍스트 수집 (가까운 label 태그 또는 aria-label 탐색)
   let labelText = '';
   if (el.id) {
@@ -102,7 +234,7 @@ function detectContextAndSync(el) {
 
   // 백그라운드로 분석 요청
   try {
-    const p = chrome.runtime.sendMessage({
+    chrome.runtime.sendMessage({
       action: 'analyze-context',
       data: { url, title, placeholder, label: labelText }
     }, (response) => {
@@ -117,28 +249,69 @@ function detectContextAndSync(el) {
         return;
       }
 
-    // 신뢰도가 80% 이상이고 자동 스위칭이 활성화되어 있을 때만 모드 자동 전환
-    if (isAutoModeEnabled && response.confidence >= 80) {
-      currentDetectedMode = response.mode;
-      updateSidebarModeUI(response.mode, response.confidence);
-    } else {
-      updateSidebarModeUI(currentDetectedMode, response.confidence || 0);
-    }
+      if (response.confidences) {
+        globalConfidences = response.confidences;
+      }
 
-    // 미니 플로팅 아이콘 표시
-    showFloatingButton(el);
-  });
+      // 신뢰도가 80% 이상이고 자동 스위칭이 활성화되어 있을 때만 모드 자동 전환
+      if (isAutoModeEnabled && response.confidence >= 80) {
+        currentDetectedMode = response.mode;
+        updateSidebarModeUI(response.mode, response.confidence);
+      } else {
+        const activeConfidence = globalConfidences[currentDetectedMode] || 0;
+        updateSidebarModeUI(currentDetectedMode, activeConfidence);
+      }
+
+      // 미니 플로팅 아이콘 표시
+      showFloatingButton(el);
+    });
+  } catch (err) {
+    console.error('컨텍스트 분석 중 오류 발생:', err);
+  }
 }
 
 /**
  * 3. 미니 플로팅 버튼 생성 및 배치
  */
 function showFloatingButton(targetEl) {
+  // 현재 문서의 head에 플로팅 버튼용 CSS가 없는 경우 동적 주입 (iframe 대응)
+  if (!document.getElementById('cdp-floating-btn-style')) {
+    const style = document.createElement('style');
+    style.id = 'cdp-floating-btn-style';
+    style.textContent = `
+      .cdp-floating-btn {
+        position: absolute !important;
+        z-index: 10000000 !important;
+        width: 32px !important;
+        height: 32px !important;
+        border-radius: 50% !important;
+        background: linear-gradient(135deg, #1E40AF 0%, #0D9488 100%) !important;
+        border: 2px solid #FFFFFF !important;
+        box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35) !important;
+        cursor: pointer !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        pointer-events: auto !important;
+      }
+      .cdp-floating-btn:hover {
+        transform: scale(1.15) translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(13, 148, 136, 0.5) !important;
+      }
+      .cdp-floating-btn svg {
+        width: 15px !important;
+        height: 15px !important;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
   if (!floatingBtn) {
     floatingBtn = document.createElement('div');
     floatingBtn.className = 'cdp-floating-btn';
     floatingBtn.title = '김대필 (자연화 텍스트 삽입)';
-    
+
     // 번개 모양 또는 AI 아이콘 느낌의 간단한 SVG 삽입
     floatingBtn.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -146,18 +319,24 @@ function showFloatingButton(targetEl) {
       </svg>
     `;
 
-    // 클릭 시 가장 최근의 자연화 결과 텍스트 즉시 주입
+    // 클릭 시 해당 인풋에 입력되어 있는 텍스트를 사이드바의 AI 초안에 추가하고 사이드바 열기
     floatingBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      
-      if (latestHumanizedText) {
-        insertTextToActiveElement(latestHumanizedText);
-        showNotification('자연화 텍스트가 삽입되었습니다!');
-      } else {
-        // 최근 결과물이 없으면 사이드바를 열어 입력을 유도
-        openSidebar();
-        showNotification('먼저 사이드바에서 자연화 변환을 수행해주세요.');
+
+      if (activeInputEl) {
+        let currentText = '';
+        if (activeInputEl.tagName === 'INPUT' || activeInputEl.tagName === 'TEXTAREA') {
+          currentText = activeInputEl.value;
+        } else if (activeInputEl.isContentEditable) {
+          currentText = activeInputEl.innerText;
+        }
+
+        // iframe과 top 프레임 간의 통일성을 위해 백그라운드로 릴레이 요청
+        chrome.runtime.sendMessage({
+          action: 'request-sidebar-sync',
+          text: currentText
+        });
       }
     });
 
@@ -184,9 +363,16 @@ function updateFloatingBtnPosition() {
   const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
   const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
 
-  // 입력창의 우측 하단 안쪽 또는 바로 밖에 배치
   const buttonSize = 28;
-  const top = rect.top + scrollTop + rect.height - buttonSize - 6;
+  
+  // 기본적으로 우측 상단 안쪽에 배치 (TEXTAREA나 contenteditable 같이 큰 영역에서 가장 잘 보임)
+  let top = rect.top + scrollTop + 6;
+  
+  // 일반 한 줄 인풋(INPUT)의 경우 높이가 작으므로 우측 세로 중앙에 오도록 보정
+  if (activeInputEl.tagName === 'INPUT') {
+    top = rect.top + scrollTop + (rect.height - buttonSize) / 2;
+  }
+  
   const left = rect.left + scrollLeft + rect.width - buttonSize - 6;
 
   floatingBtn.style.top = `${top}px`;
@@ -197,52 +383,56 @@ function updateFloatingBtnPosition() {
  * 4. 슬라이드인 사이드바 DOM 생성 (Shadow DOM 사용)
  */
 function createSidebarDOM() {
+  if (window !== window.top) return; // iframe에서는 사이드바 DOM을 생성하지 않음
+
   // 이미 생성되어 있다면 중복 방지
   if (document.getElementById('cdp-sidebar-root')) return;
 
   sidebarRoot = document.createElement('div');
   sidebarRoot.id = 'cdp-sidebar-root';
-  
-  // Shadow Host 자체에 대한 포지셔닝 보강 (자식 fixed 요소들의 정상 노출 보증)
+
+  // Shadow Host 자체에 대한 포지셔닝 보강
   sidebarRoot.style.position = 'fixed';
   sidebarRoot.style.top = '0';
   sidebarRoot.style.right = '0';
   sidebarRoot.style.height = '0';
   sidebarRoot.style.width = '0';
   sidebarRoot.style.zIndex = '99999999';
-  
+
   document.body.appendChild(sidebarRoot);
 
   // Shadow root 열기 (격리된 스타일 보장)
   const shadow = sidebarRoot.attachShadow({ mode: 'open' });
 
-  // CSS 직접 인라인 주입 (CSP 우회 및 렌더링 무결성 보증)
+  // CSS 직접 인라인 주입
   const styleEl = document.createElement('style');
   styleEl.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+
     /* 1. 미니 플로팅 버튼 스타일 */
     .cdp-floating-btn {
       position: absolute;
       z-index: 10000000;
-      width: 28px;
-      height: 28px;
+      width: 32px;
+      height: 32px;
       border-radius: 50%;
-      background-color: #1E40AF;
+      background: linear-gradient(135deg, #1E40AF 0%, #0D9488 100%);
       border: 2px solid #FFFFFF;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+      box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), background-color 0.2s;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       pointer-events: auto;
     }
     .cdp-floating-btn:hover {
-      transform: scale(1.15);
-      background-color: #0D9488;
+      transform: scale(1.15) translateY(-2px);
+      box-shadow: 0 6px 20px rgba(13, 148, 136, 0.5);
     }
     .cdp-floating-btn svg {
-      width: 14px;
-      height: 14px;
+      width: 15px;
+      height: 15px;
     }
 
     /* 2. 슬라이드인 사이드바 컨테이너 */
@@ -251,53 +441,89 @@ function createSidebarDOM() {
       top: 0;
       right: 0;
       width: 380px;
+      min-width: 320px;
+      max-width: 90vw;
       height: 100vh;
-      background-color: #FFFFFF;
-      box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+      background-color: #F8FAFC;
+      box-shadow: -8px 0 32px rgba(15, 23, 42, 0.08);
       z-index: 9999999;
       display: flex;
       flex-direction: column;
       transform: translateX(100%);
-      transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-      font-family: Arial, sans-serif;
-      color: #1F2937;
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      font-family: 'Outfit', 'Noto Sans KR', sans-serif;
+      color: #0F172A;
       box-sizing: border-box;
     }
     .cdp-sidebar-container.cdp-open {
       transform: translateX(0);
     }
+    
+    /* 리사이즈 핸들 */
+    .cdp-resize-handle {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 8px;
+      height: 100%;
+      cursor: ew-resize;
+      background-color: transparent;
+      z-index: 10000005;
+      transition: background-color 0.25s;
+    }
+    .cdp-resize-handle:hover, .cdp-resize-handle.cdp-resizing {
+      background: linear-gradient(to bottom, rgba(30, 64, 175, 0.2), rgba(13, 148, 136, 0.2));
+      border-left: 1px solid rgba(13, 148, 136, 0.4);
+    }
 
-    /* 3. 헤더 영역 */
+    /* 3. 헤더 (그라데이션 및 폰트 세팅) */
     .cdp-header {
-      padding: 16px;
-      background-color: #1E40AF;
+      padding: 14px 16px;
+      background: linear-gradient(135deg, #1E40AF 0%, #1e3a8a 50%, #0F172A 100%);
       color: #FFFFFF;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid #E5E7EB;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+      box-sizing: border-box;
+      gap: 12px;
     }
     .cdp-header-title {
       font-size: 16px;
-      font-weight: bold;
+      font-weight: 700;
+      letter-spacing: -0.02em;
       margin: 0;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .cdp-header-controls {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-size: 12px;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .cdp-header-controls span {
+      white-space: nowrap;
+    }
+    #cdp-confidence-badge {
+      white-space: nowrap;
+      display: inline-block;
     }
 
     /* 토글 스위치 */
     .cdp-switch {
       position: relative;
       display: inline-block;
-      width: 36px;
-      height: 20px;
+      width: 40px;
+      height: 22px;
     }
     .cdp-switch input {
       opacity: 0;
@@ -311,84 +537,107 @@ function createSidebarDOM() {
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #9CA3AF;
-      transition: .3s;
-      border-radius: 20px;
+      background-color: rgba(255, 255, 255, 0.3);
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 30px;
+      backdrop-filter: blur(4px);
     }
     .cdp-slider:before {
       position: absolute;
       content: "";
-      height: 14px;
-      width: 14px;
+      height: 16px;
+      width: 16px;
       left: 3px;
       bottom: 3px;
       background-color: white;
-      transition: .3s;
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
       border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
     input:checked + .cdp-slider {
       background-color: #0D9488;
     }
     input:checked + .cdp-slider:before {
-      transform: translateX(16px);
+      transform: translateX(18px);
     }
-    .cdp-close-btn {
-      background: none;
+    .cdp-icon-btn {
+      background: rgba(255, 255, 255, 0.1);
       border: none;
       color: #FFFFFF;
-      font-size: 20px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
       cursor: pointer;
-      line-height: 1;
-      padding: 0;
-      margin-left: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.25s ease;
+      flex-shrink: 0;
+    }
+    .cdp-icon-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+      transform: scale(1.08);
     }
 
-    /* 4. 사이드바 바디 */
+    /* 4. 사이드바 바디 (스크롤 및 부드러운 여백 카드뷰) */
     .cdp-body {
       flex: 1;
       overflow-y: auto;
-      padding: 16px;
+      padding: 20px 16px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
-      background-color: #F9FAFB;
+      gap: 16px;
+      background-color: #F8FAFC;
     }
     .cdp-section {
       background-color: #FFFFFF;
-      border-radius: 8px;
-      padding: 14px;
-      border: 1px solid #E5E7EB;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      border: 1px solid rgba(226, 232, 240, 0.8);
+      box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.03), 0 2px 4px -2px rgba(15, 23, 42, 0.02);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .cdp-section:hover {
+      box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.05), 0 4px 6px -4px rgba(15, 23, 42, 0.05);
     }
     .cdp-section-title {
-      font-size: 14px;
-      font-weight: bold;
-      color: #1F2937;
+      font-size: 13px;
+      font-weight: 700;
+      color: #1E293B;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
       margin-top: 0;
       margin-bottom: 12px;
+      border-left: 3px solid #1E40AF;
+      padding-left: 8px;
     }
 
-    /* 5. 모드 셀렉터 */
+    /* 5. 셀렉터 (둥근 모서리 및 입체감 제공) */
     .cdp-select {
       width: 100%;
-      padding: 8px 12px;
+      padding: 10px 14px;
       font-size: 14px;
-      border-radius: 6px;
-      border: 1px solid #E5E7EB;
+      font-family: inherit;
+      font-weight: 500;
+      border-radius: 8px;
+      border: 1px solid #E2E8F0;
       background-color: #FFFFFF;
-      color: #1F2937;
+      color: #334155;
       outline: none;
       cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
     }
     .cdp-select:focus {
       border-color: #1E40AF;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
     }
 
     /* 6. 에디터 영역 */
     .cdp-editor-section {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 14px;
     }
     .cdp-textarea-wrapper {
       display: flex;
@@ -397,65 +646,85 @@ function createSidebarDOM() {
     }
     .cdp-label {
       font-size: 12px;
-      font-weight: bold;
-      color: #4B5563;
+      font-weight: 600;
+      color: #475569;
     }
     .cdp-textarea {
       width: 100%;
-      height: 90px;
-      padding: 8px 10px;
+      height: 100px;
+      padding: 10px 12px;
       font-size: 14px;
+      font-family: inherit;
       line-height: 1.25;
-      border: 1px solid #E5E7EB;
-      border-radius: 6px;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
       resize: none;
       box-sizing: border-box;
       outline: none;
+      transition: all 0.2s;
+      color: #334155;
+      background-color: #FCFDFE;
     }
     .cdp-textarea:focus {
       border-color: #1E40AF;
+      background-color: #FFFFFF;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
     }
     .cdp-result-view {
-      min-height: 90px;
-      padding: 8px 10px;
+      min-height: 100px;
+      padding: 10px 12px;
       font-size: 14px;
+      font-family: inherit;
       line-height: 1.25;
-      border: 1px solid #E5E7EB;
-      border-radius: 6px;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
       background-color: #FFFFFF;
       white-space: pre-wrap;
       word-break: break-all;
       box-sizing: border-box;
+      color: #1E293B;
     }
     .cdp-highlight {
-      background-color: rgba(13, 148, 136, 0.1);
-      border-bottom: 1px dashed #0D9488;
+      background-color: rgba(13, 148, 136, 0.08);
+      border-bottom: 1.5px dashed #0D9488;
       padding: 1px 2px;
-      border-radius: 2px;
+      border-radius: 4px;
+      font-weight: 500;
+      color: #0F766E;
     }
     .cdp-level-group {
       display: flex;
-      gap: 8px;
+      gap: 6px;
     }
     .cdp-level-btn {
       flex: 1;
-      padding: 6px 0;
+      padding: 8px 0;
       font-size: 12px;
-      border: 1px solid #E5E7EB;
+      font-family: inherit;
+      font-weight: 600;
+      border: 1px solid #E2E8F0;
       background-color: #FFFFFF;
-      border-radius: 6px;
+      color: #64748B;
+      border-radius: 8px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .cdp-level-btn:hover {
+      background-color: #F8FAFC;
+      border-color: #CBD5E1;
+      color: #475569;
     }
     .cdp-level-btn.cdp-active {
       background-color: #1E40AF;
       color: #FFFFFF;
       border-color: #1E40AF;
+      box-shadow: 0 4px 10px rgba(30, 64, 175, 0.2);
     }
     .cdp-level-btn.cdp-active-mint {
       background-color: #0D9488;
       color: #FFFFFF;
       border-color: #0D9488;
+      box-shadow: 0 4px 10px rgba(13, 148, 136, 0.2);
     }
 
     /* 7. 분석 대시보드 */
@@ -467,32 +736,35 @@ function createSidebarDOM() {
     .cdp-gauge-item {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
     .cdp-gauge-header {
       display: flex;
       justify-content: space-between;
       font-size: 12px;
-      color: #4B5563;
+      font-weight: 600;
+      color: #475569;
     }
     .cdp-gauge-bar-bg {
       width: 100%;
-      height: 8px;
-      background-color: #E5E7EB;
-      border-radius: 4px;
+      height: 6px;
+      background-color: #F1F5F9;
+      border-radius: 10px;
       overflow: hidden;
     }
     .cdp-gauge-bar-fill {
       height: 100%;
       width: 0%;
-      border-radius: 4px;
-      transition: width 0.5s ease-out, background-color 0.3s;
+      border-radius: 10px;
+      transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.3s;
     }
     .cdp-gauge-green {
-      background-color: #10B981;
+      background: linear-gradient(90deg, #10B981, #059669);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
     }
     .cdp-gauge-red {
-      background-color: #EF4444;
+      background: linear-gradient(90deg, #F43F5E, #E11D48);
+      box-shadow: 0 0 8px rgba(244, 63, 94, 0.2);
     }
 
     /* 8. 프로필 학습 패널 */
@@ -503,57 +775,70 @@ function createSidebarDOM() {
     }
     .cdp-input {
       width: 100%;
-      padding: 6px 8px;
-      font-size: 12px;
-      border: 1px solid #E5E7EB;
-      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
       box-sizing: border-box;
       outline: none;
+      transition: all 0.2s;
+      color: #334155;
+      background-color: #FCFDFE;
     }
     .cdp-input:focus {
       border-color: #1E40AF;
+      background-color: #FFFFFF;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
     }
 
-    /* 9. 푸터 영역 */
+    /* 9. 푸터 영역 (그림자 및 트랜지션 처리) */
     .cdp-footer {
-      padding: 16px;
-      border-top: 1px solid #E5E7EB;
+      padding: 18px 16px;
+      border-top: 1px solid rgba(226, 232, 240, 0.8);
       background-color: #FFFFFF;
       display: flex;
       flex-direction: column;
       gap: 8px;
+      box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.02);
     }
     .cdp-primary-btn {
       width: 100%;
-      padding: 10px 0;
+      padding: 12px 0;
       font-size: 14px;
-      font-weight: bold;
+      font-weight: 700;
+      font-family: inherit;
       border: none;
-      border-radius: 6px;
-      background-color: #0D9488;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #0D9488 0%, #0F766E 100%);
       color: #FFFFFF;
       cursor: pointer;
-      transition: background-color 0.2s;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2);
       text-align: center;
     }
     .cdp-primary-btn:hover {
-      background-color: #0B7A70;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(13, 148, 136, 0.35);
     }
     .cdp-secondary-btn {
       width: 100%;
-      padding: 8px 0;
-      font-size: 12px;
-      border: 1px solid #E5E7EB;
-      border-radius: 6px;
+      padding: 10px 0;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
       background-color: #FFFFFF;
-      color: #4B5563;
+      color: #475569;
       cursor: pointer;
       transition: all 0.2s;
       text-align: center;
     }
     .cdp-secondary-btn:hover {
-      background-color: #F9FAFB;
-      border-color: #D1D5DB;
+      background-color: #F8FAFC;
+      border-color: #CBD5E1;
+      color: #1E293B;
     }
     .cdp-btn-row {
       display: flex;
@@ -562,22 +847,142 @@ function createSidebarDOM() {
     .cdp-btn-row button {
       flex: 1;
     }
+    
+    /* 10. 로딩 상태 스타일 */
+    .cdp-loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 30px 10px;
+      gap: 12px;
+      color: #0D9488;
+    }
+    .cdp-spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #E2E8F0;
+      border-top-color: #0D9488;
+      border-radius: 50%;
+      animation: cdp-spin 0.8s linear infinite;
+    }
+    .cdp-progress-bar-container {
+      width: 80%;
+      height: 6px;
+      background-color: #E2E8F0;
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+    .cdp-progress-bar-fill {
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(90deg, #0D9488, #0F766E);
+      border-radius: 3px;
+      position: absolute;
+      left: 0;
+      top: 0;
+      animation: cdp-progress-anim 1.5s infinite ease-in-out;
+    }
+
+    @keyframes cdp-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes cdp-progress-anim {
+      0% { left: -40%; }
+      50% { left: 40%; width: 60%; }
+      100% { left: 100%; }
+    }
+
+    /* 최근 변환 내역 아이템 스타일 */
+    .cdp-history-item {
+      background-color: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all 0.2s;
+      margin-bottom: 6px;
+    }
+    .cdp-history-item:hover {
+      background-color: #F1F5F9;
+      border-color: #CBD5E1;
+    }
+    .cdp-history-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #64748B;
+    }
+    .cdp-history-badge {
+      font-size: 10px;
+      font-weight: bold;
+      color: #ffffff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .cdp-history-badge.resume { background: #1E40AF; }
+    .cdp-history-badge.email { background: #0D9488; }
+    .cdp-history-badge.sns { background: #BE185D; }
+    
+    .cdp-history-body {
+      font-size: 12px;
+      color: #334155;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .cdp-history-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .cdp-history-btn {
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      background-color: #ffffff;
+      color: #475569;
+      padding: 2px 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .cdp-history-btn:hover {
+      background-color: #F8FAFC;
+      border-color: #CBD5E1;
+      color: #0F172A;
+    }
   `;
   shadow.appendChild(styleEl);
 
   // 사이드바 컨테이너 생성
   sidebarContainer = document.createElement('div');
   sidebarContainer.className = 'cdp-sidebar-container';
-  
+
   // HTML 구성
   sidebarContainer.innerHTML = `
+    <!-- 리사이즈 드래그 핸들 -->
+    <div class="cdp-resize-handle" id="cdp-resize-handle"></div>
+
     <!-- 헤더 -->
     <div class="cdp-header">
       <h3 class="cdp-header-title">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: middle;">
           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
         </svg>
-        김대필 (ContextWrite)
+        김대필
       </h3>
       <div class="cdp-header-controls">
         <span>자동 모드</span>
@@ -585,8 +990,19 @@ function createSidebarDOM() {
           <input type="checkbox" id="cdp-auto-toggle" checked>
           <span class="cdp-slider"></span>
         </label>
-        <span id="cdp-confidence-badge" style="font-weight: bold; background: #0D9488; padding: 2px 6px; border-radius: 10px;">신뢰도: -</span>
-        <button class="cdp-close-btn" id="cdp-close-btn">&times;</button>
+        <button class="cdp-icon-btn" id="cdp-newwindow-btn" title="새 창으로 열기">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="8" width="12" height="12" rx="2" ry="2"></rect>
+            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+          </svg>
+        </button>
+        <button class="cdp-icon-btn" id="cdp-settings-btn" title="AI 서비스/API 키 설정">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+        <button class="cdp-icon-btn" id="cdp-close-btn" style="font-size: 16px; font-weight: bold;">&times;</button>
       </div>
     </div>
 
@@ -602,13 +1018,49 @@ function createSidebarDOM() {
         </select>
       </div>
 
-      <!-- 2. 에디터 영역 (비교 뷰) -->
+      <!-- 2. 개인 맞춤형 프로필 학습 -->
+      <div class="cdp-section">
+        <p class="cdp-section-title">개인 맞춤형 프로필 학습</p>
+        <div class="cdp-profile-form">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label class="cdp-label">AI 페르소나 설정</label>
+            <select class="cdp-select" id="cdp-profile-persona" style="padding: 6px 10px; font-size: 13px; box-sizing: border-box; line-height: 1.5;">
+              <option value="professor">국어국문학과 교수 (어휘·문법 정밀 교정)</option>
+              <option value="recruiter">글로벌 IT 기업 인사담당자 (자소서·성과 강조)</option>
+              <option value="copywriter">트렌디한 카피라이터 (설득력 있는 메일·광고)</option>
+              <option value="influencer">친근한 파워 인플루언서 (소통 어조 및 이모지)</option>
+            </select>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label class="cdp-label" id="cdp-label-tone">원하는 말투/톤</label>
+            <input type="text" class="cdp-input" id="cdp-profile-tone" placeholder="예: 정중하고 부드러운 격식체">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label class="cdp-label" id="cdp-label-exp">경력 및 백그라운드</label>
+            <input type="text" class="cdp-input" id="cdp-profile-exp" placeholder="예: 3년차 프론트엔드 개발자">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label class="cdp-label" id="cdp-label-episode">핵심 강점/에피소드</label>
+            <textarea class="cdp-textarea" id="cdp-profile-episode" placeholder="자주 녹여내고 싶은 나만의 핵심 에피소드나 키워드를 적어주세요." style="height: 60px; font-size:12px;"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 에디터 영역 (비교 뷰) -->
       <div class="cdp-section cdp-editor-section">
         <p class="cdp-section-title">AI 초안 자연화 (Humanize)</p>
         
         <div class="cdp-textarea-wrapper">
-          <label class="cdp-label">Original AI 초안</label>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label class="cdp-label">Original AI 초안</label>
+            <span id="cdp-orig-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+          </div>
           <textarea class="cdp-textarea" id="cdp-original-input" placeholder="여기에 어색한 AI 초안을 입력하거나 문장을 작성하세요."></textarea>
+        </div>
+
+        <div class="cdp-textarea-wrapper">
+          <label class="cdp-label">추가 개선 요청사항 (선택)</label>
+          <input type="text" class="cdp-input" id="cdp-custom-instruction" placeholder="예: 좀 더 열정적인 어조로 써줘, 구체적 성과 위주로 다듬어줘 등" style="font-size: 12.5px;">
         </div>
 
         <div class="cdp-textarea-wrapper">
@@ -621,12 +1073,22 @@ function createSidebarDOM() {
         </div>
 
         <div class="cdp-textarea-wrapper">
-          <label class="cdp-label">Humanized 결과 (민트색: 개선된 문맥)</label>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label class="cdp-label">목표 글자수 제한 (공백 포함)</label>
+            <input type="number" id="cdp-char-limit-input" placeholder="제한 없음 (예: 500)" style="width: 120px; padding: 4px 8px; font-size: 12px; border: 1px solid #E5E7EB; border-radius: 4px; outline: none; box-sizing: border-box;">
+          </div>
+        </div>
+
+        <div class="cdp-textarea-wrapper">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label class="cdp-label">Humanized 결과 (민트색: 개선된 문맥)</label>
+            <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+          </div>
           <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.</div>
         </div>
       </div>
 
-      <!-- 3. 분석 대시보드 -->
+      <!-- 4. 분석 대시보드 -->
       <div class="cdp-section">
         <p class="cdp-section-title">AI 탐지 및 매칭 대시보드</p>
         <div class="cdp-gauge-container">
@@ -653,22 +1115,11 @@ function createSidebarDOM() {
         </div>
       </div>
 
-      <!-- 4. 프로필 학습 패널 -->
+      <!-- 5. 최근 변환 내역 -->
       <div class="cdp-section">
-        <p class="cdp-section-title">개인 맞춤형 프로필 학습</p>
-        <div class="cdp-profile-form">
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <label class="cdp-label">원하는 말투/톤</label>
-            <input type="text" class="cdp-input" id="cdp-profile-tone" placeholder="예: 정중하고 부드러운 격식체">
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <label class="cdp-label">경력 및 백그라운드</label>
-            <input type="text" class="cdp-input" id="cdp-profile-exp" placeholder="예: 3년차 프론트엔드 개발자">
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <label class="cdp-label">핵심 강점/에피소드</label>
-            <textarea class="cdp-textarea" id="cdp-profile-episode" placeholder="자주 녹여내고 싶은 나만의 핵심 에피소드나 키워드를 적어주세요." style="height: 60px; font-size:12px;"></textarea>
-          </div>
+        <p class="cdp-section-title">최근 변환 내역</p>
+        <div id="cdp-history-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding-right: 4px;">
+          <div style="font-size: 12px; color: #64748B; text-align: center; padding: 10px 0;">로딩 중...</div>
         </div>
       </div>
     </div>
@@ -701,7 +1152,7 @@ function bindSidebarEvents(shadow) {
   const transformBtn = shadow.getElementById('cdp-transform-btn');
   const insertBtn = shadow.getElementById('cdp-insert-btn');
   const docxBtn = shadow.getElementById('cdp-docx-btn');
-  
+
   // 프로필 관련 입력 필드
   const profileTone = shadow.getElementById('cdp-profile-tone');
   const profileExp = shadow.getElementById('cdp-profile-exp');
@@ -709,8 +1160,103 @@ function bindSidebarEvents(shadow) {
 
   let selectedLevel = 'light';
 
+  // 글자 수 카운트 실시간 업데이트 함수
+  const updateCharCounts = () => {
+    const origText = originalInput.value || '';
+    const origCharCount = origText.length;
+    const origCharNoSpaceCount = origText.replace(/\s/g, '').length;
+
+    const origBadge = shadow.getElementById('cdp-orig-char-count');
+    if (origBadge) {
+      origBadge.innerText = `${origCharCount}자 (공백 제외 ${origCharNoSpaceCount}자)`;
+    }
+
+    const resultText = latestHumanizedText || '';
+    const resultCharCount = resultText.length;
+    const resultCharNoSpaceCount = resultText.replace(/\s/g, '').length;
+
+    const resultBadge = shadow.getElementById('cdp-result-char-count');
+    if (resultBadge) {
+      resultBadge.innerText = `${resultCharCount}자 (공백 제외 ${resultCharNoSpaceCount}자)`;
+    }
+  };
+
   // 1. 닫기 버튼
   closeBtn.addEventListener('click', closeSidebar);
+
+  // 1-1. 설정 버튼 클릭 시 옵션 페이지 열기
+  const settingsBtn = shadow.getElementById('cdp-settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ action: 'open-options' });
+    });
+  }
+
+  // 1-1. 새창 버튼 클릭 시 새 창으로 팝업 열기
+  const newwindowBtn = shadow.getElementById('cdp-newwindow-btn');
+  if (newwindowBtn) {
+    newwindowBtn.addEventListener('click', () => {
+      const origText = originalInput ? originalInput.value : '';
+      const customInst = shadow.getElementById('cdp-custom-instruction') ? shadow.getElementById('cdp-custom-instruction').value : '';
+      const modeVal = modeSelect ? modeSelect.value : 'resume';
+      const confidenceBadge = shadow.getElementById('cdp-confidence-badge');
+      const confidenceText = confidenceBadge ? confidenceBadge.innerText : '신뢰도: -';
+      
+      chrome.storage.local.set({
+        temp_originalText: origText,
+        temp_customInstruction: customInst,
+        temp_mode: modeVal,
+        temp_confidence: confidenceText,
+        temp_globalConfidences: globalConfidences
+      }, () => {
+        chrome.runtime.sendMessage({ action: 'open-popup-window' });
+        closeSidebar(); // 사이드바는 닫음
+      });
+    });
+  }
+
+  // 1-2. 리사이즈 핸들 드래그 기능 바인딩
+  const resizeHandle = shadow.getElementById('cdp-resize-handle');
+  if (resizeHandle && sidebarContainer && sidebarRoot) {
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    const onMouseDown = (e) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = sidebarContainer.offsetWidth;
+      resizeHandle.classList.add('cdp-resizing');
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+
+      e.preventDefault();
+    };
+
+    const onMouseMove = (e) => {
+      if (!isResizing) return;
+      const widthDelta = startX - e.clientX;
+      const newWidth = Math.max(320, Math.min(window.innerWidth * 0.9, startWidth + widthDelta));
+
+      sidebarContainer.style.width = `${newWidth}px`;
+      sidebarRoot.style.width = `${newWidth}px`;
+    };
+
+    const onMouseUp = () => {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('cdp-resizing');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+    };
+
+    resizeHandle.addEventListener('mousedown', onMouseDown);
+  }
+
+  // 1-3. 입력값 변경 시 글자수 세기
+  originalInput.addEventListener('input', updateCharCounts);
 
   // 2. 자동 모드 스위칭 토글
   autoToggle.addEventListener('change', (e) => {
@@ -720,6 +1266,14 @@ function bindSidebarEvents(shadow) {
   // 3. 모드 셀렉터 변경
   modeSelect.addEventListener('change', (e) => {
     currentDetectedMode = e.target.value;
+    updateProfileFields(shadow, currentDetectedMode);
+    
+    // 수동으로 모드를 변경했을 때도 해당 모드에 부합하는 신뢰도로 갱신
+    const activeConfidence = globalConfidences[currentDetectedMode] || 0;
+    const confidenceBadge = shadow.getElementById('cdp-confidence-badge');
+    if (confidenceBadge) {
+      confidenceBadge.innerText = `신뢰도: ${activeConfidence}%`;
+    }
   });
 
   // 4. 자연화 강도 선택
@@ -727,7 +1281,7 @@ function bindSidebarEvents(shadow) {
     btn.addEventListener('click', () => {
       levelBtns.forEach(b => b.classList.remove('cdp-active', 'cdp-active-mint'));
       selectedLevel = btn.getAttribute('data-level');
-      
+
       if (selectedLevel === 'strong') {
         btn.classList.add('cdp-active-mint'); // Strong일 때는 민트색으로 강조
       } else {
@@ -744,19 +1298,46 @@ function bindSidebarEvents(shadow) {
       return;
     }
 
+    const charLimitVal = shadow.getElementById('cdp-char-limit-input') ? parseInt(shadow.getElementById('cdp-char-limit-input').value, 10) : null;
+
+    // 로딩바 표시 및 버튼 비활성화
+    const resultView = shadow.getElementById('cdp-humanized-result');
+    if (resultView) {
+      resultView.innerHTML = `
+        <div class="cdp-loading-container">
+          <div class="cdp-spinner"></div>
+          <div style="font-size: 13px; font-weight: 500; text-align: center;">AI가 자연스러운 문맥을 학습하여 교정 중입니다...</div>
+          <div class="cdp-progress-bar-container">
+            <div class="cdp-progress-bar-fill"></div>
+          </div>
+        </div>
+      `;
+    }
+    transformBtn.disabled = true;
+    transformBtn.style.opacity = '0.6';
+    transformBtn.innerText = '변환 중...';
+
     // 로컬 스토리지에 저장된 유저 프로필 로드
-    chrome.storage.local.get(['profileTone', 'profileExp', 'profileEpisode'], (res) => {
+    chrome.storage.local.get(['profileTone', 'profileExp', 'profileEpisode', 'profilePersona'], (res) => {
       const profile = {
         tone: res.profileTone || '',
         experience: res.profileExp || '',
         episode: res.profileEpisode || ''
       };
+      const persona = res.profilePersona || 'professor';
 
       // 0. 확장 프로그램 컨텍스트 유효성 검사
       if (!chrome.runtime || !chrome.runtime.id) {
         alert('확장 프로그램 연결이 끊어졌습니다. 페이지를 새로고침해주세요.');
+        // 로딩바 및 버튼 복원
+        if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+        transformBtn.disabled = false;
+        transformBtn.style.opacity = '1';
+        transformBtn.innerText = '자연화 변환';
         return;
       }
+
+      const customInstruction = shadow.getElementById('cdp-custom-instruction') ? shadow.getElementById('cdp-custom-instruction').value : '';
 
       // 백그라운드로 자연화 요청
       try {
@@ -766,35 +1347,59 @@ function bindSidebarEvents(shadow) {
             text: text,
             level: selectedLevel,
             mode: currentDetectedMode,
-            profile: profile
+            profile: profile,
+            charLimit: isNaN(charLimitVal) ? null : charLimitVal,
+            customInstruction: customInstruction,
+            persona: persona
           }
         }, (response) => {
+          // 버튼 상태 즉시 복원
+          transformBtn.disabled = false;
+          transformBtn.style.opacity = '1';
+          transformBtn.innerText = '자연화 변환';
+
           if (chrome.runtime.lastError) {
             alert('백그라운드 서비스 워커와의 통신 실패. 페이지를 새로고침한 후 다시 시도해 주세요.');
+            if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
             return;
           }
           if (!response || !response.success) {
             alert('변환 요청 중 오류가 발생했습니다.');
+            if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
             return;
           }
 
           // 결과 반영 및 하이라이트 효과 적용
           latestHumanizedText = response.humanizedText;
           renderHumanizedResult(shadow, response.humanizedText);
+          updateCharCounts(); // 결과 글자 수 반영
 
           // 분석 대시보드 게이지 업데이트
           updateDashboard(shadow, response.aiDetectionScore, response.atsScore);
+
+          // 내역 저장 호출
+          saveToHistory(shadow, currentDetectedMode, text, response.humanizedText);
         });
 
         if (p && typeof p.catch === 'function') {
           p.catch(err => {
+            // 버튼 상태 즉시 복원
+            transformBtn.disabled = false;
+            transformBtn.style.opacity = '1';
+            transformBtn.innerText = '자연화 변환';
+            if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
             alert('백그라운드 연결 오류가 발생했습니다. 페이지를 새로고침해주세요.');
           });
         }
       } catch (err) {
         console.error(err);
+        // 오류 시 상태 복원
+        transformBtn.disabled = false;
+        transformBtn.style.opacity = '1';
+        transformBtn.innerText = '자연화 변환';
+        if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
       }
-  });
+    });
   });
 
   // 6. 웹페이지에 삽입 버튼
@@ -819,23 +1424,60 @@ function bindSidebarEvents(shadow) {
 
   // 8. 프로필 데이터 자동 저장 및 복구
   // 복구
-  chrome.storage.local.get(['profileTone', 'profileExp', 'profileEpisode'], (res) => {
-    if (res.profileTone) profileTone.value = res.profileTone;
-    if (res.profileExp) profileExp.value = res.profileExp;
-    if (res.profileEpisode) profileEpisode.value = res.profileEpisode;
-  });
+  updateProfileFields(shadow, currentDetectedMode);
+  updateCharCounts(); // 초기 복구 시점에 글자 수 카운팅 계산
+
+  const profilePersona = shadow.getElementById('cdp-profile-persona');
 
   // 변경 이벤트 시 자동 저장
   const saveProfile = () => {
-    chrome.storage.local.set({
-      profileTone: profileTone.value,
-      profileExp: profileExp.value,
-      profileEpisode: profileEpisode.value
-    });
+    const mode = currentDetectedMode;
+    const data = {};
+    data[`${mode}_profileTone`] = profileTone.value;
+    data[`${mode}_profileExp`] = profileExp.value;
+    data[`${mode}_profileEpisode`] = profileEpisode.value;
+    data[`${mode}_profilePersona`] = profilePersona.value;
+    
+    // 호환성을 위해 기본 키로도 동시 저장하여 기존 백그라운드와의 마찰 제거
+    data['profileTone'] = profileTone.value;
+    data['profileExp'] = profileExp.value;
+    data['profileEpisode'] = profileEpisode.value;
+    data['profilePersona'] = profilePersona.value;
+
+    chrome.storage.local.set(data);
   };
   profileTone.addEventListener('input', saveProfile);
   profileExp.addEventListener('input', saveProfile);
   profileEpisode.addEventListener('input', saveProfile);
+  if (profilePersona) {
+    profilePersona.addEventListener('change', saveProfile);
+  }
+
+  // 9. 최근 변환 내역 로드 및 삭제/복사 바인딩
+  loadAndRenderHistory(shadow);
+
+  const historyList = shadow.getElementById('cdp-history-list');
+  if (historyList) {
+    historyList.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target.classList.contains('cdp-history-copy-btn')) {
+        const text = target.getAttribute('data-text');
+        navigator.clipboard.writeText(text).then(() => {
+          showNotification('내역이 클립보드에 복사되었습니다!');
+        });
+      } else if (target.classList.contains('cdp-history-del-btn')) {
+        const logId = parseInt(target.getAttribute('data-id'), 10);
+        chrome.storage.local.get(['historyLogs'], (res) => {
+          const logs = res.historyLogs || [];
+          const updatedLogs = logs.filter(item => item.id !== logId);
+          chrome.storage.local.set({ historyLogs: updatedLogs }, () => {
+            loadAndRenderHistory(shadow);
+            showNotification('내역이 삭제되었습니다.');
+          });
+        });
+      }
+    });
+  }
 }
 
 /**
@@ -853,6 +1495,64 @@ function updateSidebarModeUI(mode, confidence) {
   if (confidenceBadge) {
     confidenceBadge.innerText = `신뢰도: ${confidence}%`;
   }
+  updateProfileFields(shadow, mode);
+}
+
+/**
+ * 모드에 맞춰 동적으로 라벨 및 플레이스홀더를 변경하고 저장된 데이터를 가져오는 헬퍼
+ */
+function updateProfileFields(shadow, mode) {
+  const profileTone = shadow.getElementById('cdp-profile-tone');
+  const profileExp = shadow.getElementById('cdp-profile-exp');
+  const profileEpisode = shadow.getElementById('cdp-profile-episode');
+  const profilePersona = shadow.getElementById('cdp-profile-persona');
+  if (!profileTone || !profileExp || !profileEpisode || !profilePersona) return;
+
+  const labelTone = shadow.getElementById('cdp-label-tone');
+  const labelExp = shadow.getElementById('cdp-label-exp');
+  const labelEpisode = shadow.getElementById('cdp-label-episode');
+
+  if (mode === 'resume') {
+    if (labelTone) labelTone.innerText = '원하는 말투/톤';
+    profileTone.placeholder = '예: 차분하고 신뢰감을 주는 존댓말';
+    
+    if (labelExp) labelExp.innerText = '경력 및 백그라운드';
+    profileExp.placeholder = '예: 3년차 프론트엔드 개발자';
+    
+    if (labelEpisode) labelEpisode.innerText = '핵심 강점/에피소드';
+    profileEpisode.placeholder = '자소서에 녹여내고 싶은 나만의 구체적인 에피소드나 역량 키워드';
+  } else if (mode === 'email') {
+    if (labelTone) labelTone.innerText = '이메일 말투/톤';
+    profileTone.placeholder = '예: 격식 있고 정중한 비즈니스 톤';
+    
+    if (labelExp) labelExp.innerText = '발신자 직무/직책 및 회사';
+    profileExp.placeholder = '예: ABC테크 마케팅팀 대리';
+    
+    if (labelEpisode) labelEpisode.innerText = '자주 쓰는 문맥/요건';
+    profileEpisode.placeholder = '이메일 본문에 자주 들어가는 주요 요청사항이나 양식 안내';
+  } else if (mode === 'sns') {
+    if (labelTone) labelTone.innerText = '포스팅 말투/톤';
+    profileTone.placeholder = '예: 친근하고 이웃 소통을 이끄는 반말';
+    
+    if (labelExp) labelExp.innerText = '채널 주제 및 타깃';
+    profileExp.placeholder = '예: IT 테크 정보 리뷰 블로그';
+    
+    if (labelEpisode) labelEpisode.innerText = '해시태그 및 핵심 키워드';
+    profileEpisode.placeholder = '포스팅에 자주 삽입하고 싶은 대표 키워드와 태그 목록';
+  }
+
+  // 로컬 스토리지에서 해당 모드의 데이터 불러오기
+  chrome.storage.local.get([
+    `${mode}_profileTone`, 
+    `${mode}_profileExp`, 
+    `${mode}_profileEpisode`,
+    `${mode}_profilePersona`
+  ], (res) => {
+    profileTone.value = res[`${mode}_profileTone`] || '';
+    profileExp.value = res[`${mode}_profileExp`] || '';
+    profileEpisode.value = res[`${mode}_profileEpisode`] || '';
+    profilePersona.value = res[`${mode}_profilePersona`] || 'professor';
+  });
 }
 
 /**
@@ -863,10 +1563,8 @@ function renderHumanizedResult(shadow, text) {
   if (!resultView) return;
 
   // 개선된 어휘나 문맥 단어들을 연한 민트색 배경으로 하이라이팅하는 모크 렌더러
-  // 결과물 텍스트에서 괄호 처리된 부분이나 핵심 변경 표현들을 감지하여 span 처리
   let html = text
-    .replace(/(\[.*?\])/g, '<span class="cdp-highlight">$1</span>')
-    .replace(/(할 수 있었습니다|프로세스를 효율적으로|정중하고 부드러운)/g, '<span class="cdp-highlight">$1</span>');
+    .replace(/(할 수 있었습니다|프로세스를 효율적으로|정중하고 부드러운|자연스럽게|성장하며|역량이|전문성은|신뢰감을|정중하고|요청이나|피드백이|협업을|이끌어내도록|몸에 익힐|자리 잡았습니다|도출하는 데|보완하여|극대화할 수)/g, '<span class="cdp-highlight">$1</span>');
 
   resultView.innerHTML = html;
 }
@@ -968,7 +1666,7 @@ function downloadDocx(original, humanized) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `김대필_자연화결과_${new Date().toISOString().slice(0,10)}.doc`;
+  a.download = `김대필_자연화결과_${new Date().toISOString().slice(0, 10)}.doc`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1019,10 +1717,105 @@ function toggleSidebar() {
 
 function openSidebar() {
   if (!sidebarContainer) return;
+  if (sidebarRoot) {
+    const targetWidth = sidebarContainer.style.width || '380px';
+    sidebarRoot.style.width = targetWidth;
+    sidebarRoot.style.height = '100vh';
+  }
   sidebarContainer.classList.add('cdp-open');
 }
 
 function closeSidebar() {
   if (!sidebarContainer) return;
   sidebarContainer.classList.remove('cdp-open');
+  // 슬라이드 애니메이션(0.3s)이 완료된 후 sidebarRoot 크기를 0으로 축소하여 페이지 클릭 간섭 방지
+  setTimeout(() => {
+    if (sidebarContainer && !sidebarContainer.classList.contains('cdp-open') && sidebarRoot) {
+      sidebarRoot.style.width = '0';
+      sidebarRoot.style.height = '0';
+    }
+  }, 300);
+}
+
+/**
+ * 최근 변환 내역 로드 및 렌더링
+ */
+function loadAndRenderHistory(shadow) {
+  const historyList = shadow.getElementById('cdp-history-list');
+  if (!historyList) return;
+
+  chrome.storage.local.get(['saveHistoryEnabled', 'historyLogs'], (res) => {
+    const saveEnabled = res.saveHistoryEnabled !== false; // 기본값 true
+    const logs = res.historyLogs || [];
+
+    if (!saveEnabled) {
+      historyList.innerHTML = `<div style="font-size: 11px; color: #94A3B8; text-align: center; padding: 16px 0;">설정에서 '작성 내역 자동 저장'이 비활성화 상태입니다.</div>`;
+      return;
+    }
+
+    if (logs.length === 0) {
+      historyList.innerHTML = `<div style="font-size: 11px; color: #94A3B8; text-align: center; padding: 16px 0;">저장된 최근 작성 내역이 없습니다.</div>`;
+      return;
+    }
+
+    let html = '';
+    logs.forEach(log => {
+      let modeClass = 'resume';
+      let modeName = '자소서';
+      if (log.mode === 'email') { modeClass = 'email'; modeName = '이메일'; }
+      if (log.mode === 'sns') { modeClass = 'sns'; modeName = 'SNS/블로그'; }
+
+      // 텍스트 이스케이프 처리 (HTML 태그 오작동 방지)
+      const cleanHumanizedText = (log.humanizedText || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+      html += `
+        <div class="cdp-history-item">
+          <div class="cdp-history-item-header">
+            <span class="cdp-history-badge ${modeClass}">${modeName}</span>
+            <span>${log.timestamp || ''}</span>
+          </div>
+          <div class="cdp-history-body">${cleanHumanizedText}</div>
+          <div class="cdp-history-actions">
+            <button class="cdp-history-btn cdp-history-copy-btn" data-text="${cleanHumanizedText}">복사</button>
+            <button class="cdp-history-btn cdp-history-del-btn" data-id="${log.id}">삭제</button>
+          </div>
+        </div>
+      `;
+    });
+
+    historyList.innerHTML = html;
+  });
+}
+
+/**
+ * 신규 변환 결과를 내역에 추가 저장
+ */
+function saveToHistory(shadow, mode, original, humanized) {
+  chrome.storage.local.get(['saveHistoryEnabled', 'historyLogs'], (res) => {
+    const saveEnabled = res.saveHistoryEnabled !== false;
+    if (!saveEnabled) return;
+
+    const logs = res.historyLogs || [];
+    const dateStr = new Date().toLocaleString('ko-KR', { hour12: false }).slice(2, 16); // "26. 07. 07. 09:50"
+
+    const newLog = {
+      id: Date.now(),
+      timestamp: dateStr,
+      mode: mode,
+      originalText: original,
+      humanizedText: humanized
+    };
+
+    // 앞에 추가하고 최대 20개로 제한
+    const updatedLogs = [newLog, ...logs].slice(0, 20);
+
+    chrome.storage.local.set({ historyLogs: updatedLogs }, () => {
+      loadAndRenderHistory(shadow);
+    });
+  });
 }
