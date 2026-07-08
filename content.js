@@ -253,6 +253,12 @@ function detectContextAndSync(el) {
         globalConfidences = response.confidences;
       }
 
+      // 1. 해당 페이지가 메일, 이력서, 자소서, 블로그, SNS 중 하나인지 신뢰도로 최종 판정 (최소 40% 이상 매칭 필수)
+      if (response.confidence < 40) {
+        hideFloatingButton();
+        return;
+      }
+
       // 신뢰도가 80% 이상이고 자동 스위칭이 활성화되어 있을 때만 모드 자동 전환
       if (isAutoModeEnabled && response.confidence >= 80) {
         currentDetectedMode = response.mode;
@@ -672,7 +678,7 @@ function createSidebarDOM() {
     }
     .cdp-result-view {
       min-height: 100px;
-      padding: 10px 12px;
+      padding: 12px;
       font-size: 14px;
       font-family: inherit;
       line-height: 1.25;
@@ -1040,6 +1046,14 @@ function createSidebarDOM() {
             <input type="text" class="cdp-input" id="cdp-profile-exp" placeholder="예: 3년차 프론트엔드 개발자">
           </div>
           <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label class="cdp-label" id="cdp-label-target">지원회사</label>
+            <input type="text" class="cdp-input" id="cdp-profile-target" placeholder="예: 네이버">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label class="cdp-label" id="cdp-label-job">업직종</label>
+            <input type="text" class="cdp-input" id="cdp-profile-job" placeholder="예: IT/프론트엔드 개발자">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
             <label class="cdp-label" id="cdp-label-episode">핵심 강점/에피소드</label>
             <textarea class="cdp-textarea" id="cdp-profile-episode" placeholder="자주 녹여내고 싶은 나만의 핵심 에피소드나 키워드를 적어주세요." style="height: 60px; font-size:12px;"></textarea>
           </div>
@@ -1085,6 +1099,12 @@ function createSidebarDOM() {
             <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
           </div>
           <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.</div>
+          <div id="cdp-model-badge-container" style="display: flex; justify-content: flex-end; margin-top: 6px; margin-bottom: 2px;">
+            <span id="cdp-model-badge" style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #64748B; background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 2px 8px; border-radius: 9999px; font-weight: 600; box-shadow: inset 0 1px 1px rgba(0,0,0,0.02); transition: all 0.2s;">
+              <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background-color: #94A3B8;" id="cdp-model-status-dot"></span>
+              <span id="cdp-model-name-text">AI 모델: 대기 중</span>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1156,6 +1176,8 @@ function bindSidebarEvents(shadow) {
   // 프로필 관련 입력 필드
   const profileTone = shadow.getElementById('cdp-profile-tone');
   const profileExp = shadow.getElementById('cdp-profile-exp');
+  const profileTarget = shadow.getElementById('cdp-profile-target');
+  const profileJob = shadow.getElementById('cdp-profile-job');
   const profileEpisode = shadow.getElementById('cdp-profile-episode');
 
   let selectedLevel = 'light';
@@ -1201,13 +1223,17 @@ function bindSidebarEvents(shadow) {
       const modeVal = modeSelect ? modeSelect.value : 'resume';
       const confidenceBadge = shadow.getElementById('cdp-confidence-badge');
       const confidenceText = confidenceBadge ? confidenceBadge.innerText : '신뢰도: -';
+      const targetVal = profileTarget ? profileTarget.value : '';
+      const jobVal = profileJob ? profileJob.value : '';
       
       chrome.storage.local.set({
         temp_originalText: origText,
         temp_customInstruction: customInst,
         temp_mode: modeVal,
         temp_confidence: confidenceText,
-        temp_globalConfidences: globalConfidences
+        temp_globalConfidences: globalConfidences,
+        temp_profileTarget: targetVal,
+        temp_profileJob: jobVal
       }, () => {
         chrome.runtime.sendMessage({ action: 'open-popup-window' });
         closeSidebar(); // 사이드바는 닫음
@@ -1318,10 +1344,12 @@ function bindSidebarEvents(shadow) {
     transformBtn.innerText = '변환 중...';
 
     // 로컬 스토리지에 저장된 유저 프로필 로드
-    chrome.storage.local.get(['profileTone', 'profileExp', 'profileEpisode', 'profilePersona'], (res) => {
+    chrome.storage.local.get(['profileTone', 'profileExp', 'profileTarget', 'profileJob', 'profileEpisode', 'profilePersona'], (res) => {
       const profile = {
         tone: res.profileTone || '',
         experience: res.profileExp || '',
+        target: res.profileTarget || '',
+        job: res.profileJob || '',
         episode: res.profileEpisode || ''
       };
       const persona = res.profilePersona || 'professor';
@@ -1371,8 +1399,18 @@ function bindSidebarEvents(shadow) {
 
           // 결과 반영 및 하이라이트 효과 적용
           latestHumanizedText = response.humanizedText;
-          renderHumanizedResult(shadow, response.humanizedText);
+          renderHumanizedResult(shadow, response.humanizedText, response.warnings);
           updateCharCounts(); // 결과 글자 수 반영
+
+          // 모델 배지 업데이트
+          const modelNameText = shadow.getElementById('cdp-model-name-text');
+          const modelStatusDot = shadow.getElementById('cdp-model-status-dot');
+          if (modelNameText && response.modelUsed) {
+            modelNameText.innerText = `AI 모델: ${response.modelUsed}`;
+            if (modelStatusDot) {
+              modelStatusDot.style.backgroundColor = response.modelUsed.includes('시뮬레이터') ? '#64748B' : '#0D9488';
+            }
+          }
 
           // 분석 대시보드 게이지 업데이트
           updateDashboard(shadow, response.aiDetectionScore, response.atsScore);
@@ -1435,12 +1473,16 @@ function bindSidebarEvents(shadow) {
     const data = {};
     data[`${mode}_profileTone`] = profileTone.value;
     data[`${mode}_profileExp`] = profileExp.value;
+    data[`${mode}_profileTarget`] = profileTarget.value;
+    data[`${mode}_profileJob`] = profileJob.value;
     data[`${mode}_profileEpisode`] = profileEpisode.value;
     data[`${mode}_profilePersona`] = profilePersona.value;
     
     // 호환성을 위해 기본 키로도 동시 저장하여 기존 백그라운드와의 마찰 제거
     data['profileTone'] = profileTone.value;
     data['profileExp'] = profileExp.value;
+    data['profileTarget'] = profileTarget.value;
+    data['profileJob'] = profileJob.value;
     data['profileEpisode'] = profileEpisode.value;
     data['profilePersona'] = profilePersona.value;
 
@@ -1448,6 +1490,8 @@ function bindSidebarEvents(shadow) {
   };
   profileTone.addEventListener('input', saveProfile);
   profileExp.addEventListener('input', saveProfile);
+  profileTarget.addEventListener('input', saveProfile);
+  profileJob.addEventListener('input', saveProfile);
   profileEpisode.addEventListener('input', saveProfile);
   if (profilePersona) {
     profilePersona.addEventListener('change', saveProfile);
@@ -1504,12 +1548,16 @@ function updateSidebarModeUI(mode, confidence) {
 function updateProfileFields(shadow, mode) {
   const profileTone = shadow.getElementById('cdp-profile-tone');
   const profileExp = shadow.getElementById('cdp-profile-exp');
+  const profileTarget = shadow.getElementById('cdp-profile-target');
+  const profileJob = shadow.getElementById('cdp-profile-job');
   const profileEpisode = shadow.getElementById('cdp-profile-episode');
   const profilePersona = shadow.getElementById('cdp-profile-persona');
-  if (!profileTone || !profileExp || !profileEpisode || !profilePersona) return;
+  if (!profileTone || !profileExp || !profileTarget || !profileJob || !profileEpisode || !profilePersona) return;
 
   const labelTone = shadow.getElementById('cdp-label-tone');
   const labelExp = shadow.getElementById('cdp-label-exp');
+  const labelTarget = shadow.getElementById('cdp-label-target');
+  const labelJob = shadow.getElementById('cdp-label-job');
   const labelEpisode = shadow.getElementById('cdp-label-episode');
 
   if (mode === 'resume') {
@@ -1518,6 +1566,12 @@ function updateProfileFields(shadow, mode) {
     
     if (labelExp) labelExp.innerText = '경력 및 백그라운드';
     profileExp.placeholder = '예: 3년차 프론트엔드 개발자';
+
+    if (labelTarget) labelTarget.innerText = '지원회사';
+    profileTarget.placeholder = '예: 네이버';
+
+    if (labelJob) labelJob.innerText = '업직종';
+    profileJob.placeholder = '예: IT/프론트엔드 개발자';
     
     if (labelEpisode) labelEpisode.innerText = '핵심 강점/에피소드';
     profileEpisode.placeholder = '자소서에 녹여내고 싶은 나만의 구체적인 에피소드나 역량 키워드';
@@ -1527,6 +1581,12 @@ function updateProfileFields(shadow, mode) {
     
     if (labelExp) labelExp.innerText = '발신자 직무/직책 및 회사';
     profileExp.placeholder = '예: ABC테크 마케팅팀 대리';
+
+    if (labelTarget) labelTarget.innerText = '수신자 정보';
+    profileTarget.placeholder = '예: 프로젝트 협력사';
+
+    if (labelJob) labelJob.innerText = '관계/직급';
+    profileJob.placeholder = '예: 담당 실장님';
     
     if (labelEpisode) labelEpisode.innerText = '자주 쓰는 문맥/요건';
     profileEpisode.placeholder = '이메일 본문에 자주 들어가는 주요 요청사항이나 양식 안내';
@@ -1536,6 +1596,12 @@ function updateProfileFields(shadow, mode) {
     
     if (labelExp) labelExp.innerText = '채널 주제 및 타깃';
     profileExp.placeholder = '예: IT 테크 정보 리뷰 블로그';
+
+    if (labelTarget) labelTarget.innerText = '채널 주제';
+    profileTarget.placeholder = '예: IT 테크 정보 리뷰';
+
+    if (labelJob) labelJob.innerText = '타깃 독자층 및 관심사';
+    profileJob.placeholder = '예: 2030 IT/테크 얼리어답터';
     
     if (labelEpisode) labelEpisode.innerText = '해시태그 및 핵심 키워드';
     profileEpisode.placeholder = '포스팅에 자주 삽입하고 싶은 대표 키워드와 태그 목록';
@@ -1545,11 +1611,15 @@ function updateProfileFields(shadow, mode) {
   chrome.storage.local.get([
     `${mode}_profileTone`, 
     `${mode}_profileExp`, 
+    `${mode}_profileTarget`,
+    `${mode}_profileJob`,
     `${mode}_profileEpisode`,
     `${mode}_profilePersona`
   ], (res) => {
     profileTone.value = res[`${mode}_profileTone`] || '';
     profileExp.value = res[`${mode}_profileExp`] || '';
+    profileTarget.value = res[`${mode}_profileTarget`] || '';
+    profileJob.value = res[`${mode}_profileJob`] || '';
     profileEpisode.value = res[`${mode}_profileEpisode`] || '';
     profilePersona.value = res[`${mode}_profilePersona`] || 'professor';
   });
@@ -1558,13 +1628,19 @@ function updateProfileFields(shadow, mode) {
 /**
  * 자연화 결과물 하이라이트 렌더링
  */
-function renderHumanizedResult(shadow, text) {
+function renderHumanizedResult(shadow, text, warnings) {
   const resultView = shadow.getElementById('cdp-humanized-result');
   if (!resultView) return;
 
   // 개선된 어휘나 문맥 단어들을 연한 민트색 배경으로 하이라이팅하는 모크 렌더러
   let html = text
     .replace(/(할 수 있었습니다|프로세스를 효율적으로|정중하고 부드러운|자연스럽게|성장하며|역량이|전문성은|신뢰감을|정중하고|요청이나|피드백이|협업을|이끌어내도록|몸에 익힐|자리 잡았습니다|도출하는 데|보완하여|극대화할 수)/g, '<span class="cdp-highlight">$1</span>');
+
+  // 경고 알림 문구가 존재할 시 상단 경고 배너 삽입
+  if (warnings && warnings.length > 0) {
+    const warningBanner = `<div class="cdp-warning-banner" style="background-color: #FEF3C7; border: 1px solid #F59E0B; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: 11.5px; color: #92400E; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box; line-height: 1.4;"><div style="font-weight: 700; display: flex; align-items: center; gap: 4px; border-bottom: 1px solid rgba(245, 158, 11, 0.3); padding-bottom: 4px; margin-bottom: 2px;">⚠️ 입력 문맥 분석 주의 알림</div><div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">${warnings.map(w => `<div style="display: flex; gap: 6px; align-items: flex-start; line-height: 1.4;"><span style="color: #F59E0B; font-weight: bold; flex-shrink: 0;">•</span><span style="flex-grow: 1;">${w}</span></div>`).join('')}</div></div>`;
+    html = warningBanner + html;
+  }
 
   resultView.innerHTML = html;
 }

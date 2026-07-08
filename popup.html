@@ -541,6 +541,14 @@
           <input type="text" class="cdp-input" id="cdp-profile-exp" placeholder="예: 3년차 프론트엔드 개발자">
         </div>
         <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label class="cdp-label" id="cdp-label-target">지원회사</label>
+          <input type="text" class="cdp-input" id="cdp-profile-target" placeholder="예: 네이버">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label class="cdp-label" id="cdp-label-job">업직종</label>
+          <input type="text" class="cdp-input" id="cdp-profile-job" placeholder="예: IT/프론트엔드 개발자">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
           <label class="cdp-label" id="cdp-label-episode">핵심 강점/에피소드</label>
           <textarea class="cdp-textarea" id="cdp-profile-episode" placeholder="자주 녹여내고 싶은 나만의 핵심 에피소드나 키워드를 적어주세요." style="height: 60px; font-size:12px;"></textarea>
         </div>
@@ -586,6 +594,12 @@
           <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
         </div>
         <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.</div>
+        <div id="cdp-model-badge-container" style="display: flex; justify-content: flex-end; margin-top: 6px; margin-bottom: 2px;">
+          <span id="cdp-model-badge" style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #64748B; background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 2px 8px; border-radius: 9999px; font-weight: 600; box-shadow: inset 0 1px 1px rgba(0,0,0,0.02); transition: all 0.2s;">
+            <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background-color: #94A3B8;" id="cdp-model-status-dot"></span>
+            <span id="cdp-model-name-text">AI 모델: 대기 중</span>
+          </span>
+        </div>
       </div>
     </div>
 

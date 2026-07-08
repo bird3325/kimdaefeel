@@ -168,6 +168,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // 탭 전환 기능 바인딩 (Manifest V3 CSP 준수)
+  const menuItems = document.querySelectorAll('.sidebar-menu-item');
+  const panels = document.querySelectorAll('.tab-panel');
+
+  menuItems.forEach(item => {
+    item.addEventListener('click', () => {
+      const targetId = item.getAttribute('data-target');
+      
+      menuItems.forEach(mi => mi.classList.remove('active'));
+      panels.forEach(pan => pan.classList.remove('active'));
+
+      item.classList.add('active');
+      const activePanel = document.getElementById(targetId);
+      if (activePanel) {
+        activePanel.classList.add('active');
+      }
+    });
+  });
+
   // FAQ 아코디언 핸들러
   const faqQuestions = document.querySelectorAll('.faq-question');
   faqQuestions.forEach(q => {

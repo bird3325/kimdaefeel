@@ -26,6 +26,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const profileTone = document.getElementById('cdp-profile-tone');
   const profileExp = document.getElementById('cdp-profile-exp');
+  const profileTarget = document.getElementById('cdp-profile-target');
+  const profileJob = document.getElementById('cdp-profile-job');
   const profileEpisode = document.getElementById('cdp-profile-episode');
   const profilePersona = document.getElementById('cdp-profile-persona');
 
@@ -79,12 +81,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const data = {};
     data[`${mode}_profileTone`] = profileTone.value;
     data[`${mode}_profileExp`] = profileExp.value;
+    data[`${mode}_profileTarget`] = profileTarget.value;
+    data[`${mode}_profileJob`] = profileJob.value;
     data[`${mode}_profileEpisode`] = profileEpisode.value;
     data[`${mode}_profilePersona`] = profilePersona.value;
     
     // 호환용 키
     data['profileTone'] = profileTone.value;
     data['profileExp'] = profileExp.value;
+    data['profileTarget'] = profileTarget.value;
+    data['profileJob'] = profileJob.value;
     data['profileEpisode'] = profileEpisode.value;
     data['profilePersona'] = profilePersona.value;
 
@@ -92,6 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   profileTone.addEventListener('input', saveProfile);
   profileExp.addEventListener('input', saveProfile);
+  profileTarget.addEventListener('input', saveProfile);
+  profileJob.addEventListener('input', saveProfile);
   profileEpisode.addEventListener('input', saveProfile);
   if (profilePersona) {
     profilePersona.addEventListener('change', saveProfile);
@@ -122,10 +130,12 @@ document.addEventListener('DOMContentLoaded', () => {
     transformBtn.innerText = '변환 중...';
 
     // 스토리지 프로필 로드 후 백그라운드로 전달
-    chrome.storage.local.get(['profileTone', 'profileExp', 'profileEpisode', 'profilePersona'], (res) => {
+    chrome.storage.local.get(['profileTone', 'profileExp', 'profileTarget', 'profileJob', 'profileEpisode', 'profilePersona'], (res) => {
       const profile = {
         tone: res.profileTone || '',
         experience: res.profileExp || '',
+        target: res.profileTarget || '',
+        job: res.profileJob || '',
         episode: res.profileEpisode || ''
       };
       const persona = res.profilePersona || 'professor';
@@ -155,9 +165,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         latestHumanizedText = response.humanizedText;
-        renderHumanizedResult(response.humanizedText);
+        renderHumanizedResult(response.humanizedText, response.warnings);
         updateCharCounts();
         updateDashboard(response.aiDetectionScore, response.atsScore);
+
+        // 모델 배지 업데이트
+        const modelNameText = document.getElementById('cdp-model-name-text');
+        const modelStatusDot = document.getElementById('cdp-model-status-dot');
+        if (modelNameText && response.modelUsed) {
+          modelNameText.innerText = `AI 모델: ${response.modelUsed}`;
+          if (modelStatusDot) {
+            modelStatusDot.style.backgroundColor = response.modelUsed.includes('시뮬레이터') ? '#64748B' : '#0D9488';
+          }
+        }
+
         saveToHistory(currentDetectedMode, text, response.humanizedText);
       });
     });
@@ -212,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 초기 로드 및 임시 데이터 복구
-  chrome.storage.local.get(['temp_originalText', 'temp_customInstruction', 'temp_mode', 'temp_confidence', 'temp_globalConfidences'], (res) => {
+  chrome.storage.local.get(['temp_originalText', 'temp_customInstruction', 'temp_mode', 'temp_confidence', 'temp_globalConfidences', 'temp_profileTarget', 'temp_profileJob'], (res) => {
     if (res.temp_mode) {
       modeSelect.value = res.temp_mode;
       currentDetectedMode = res.temp_mode;
@@ -233,6 +254,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (customInstEl) customInstEl.value = res.temp_customInstruction;
     }
 
+    if (res.temp_profileTarget) {
+      if (profileTarget) profileTarget.value = res.temp_profileTarget;
+    }
+    if (res.temp_profileJob) {
+      if (profileJob) profileJob.value = res.temp_profileJob;
+    }
+
     if (res.temp_confidence) {
       const confidenceBadge = document.getElementById('cdp-confidence-badge');
       if (confidenceBadge) confidenceBadge.innerText = res.temp_confidence;
@@ -242,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAndRenderHistory();
 
     // 복구 후 즉시 임시 스토리지 비우기
-    chrome.storage.local.remove(['temp_originalText', 'temp_customInstruction', 'temp_mode', 'temp_confidence', 'temp_globalConfidences']);
+    chrome.storage.local.remove(['temp_originalText', 'temp_customInstruction', 'temp_mode', 'temp_confidence', 'temp_globalConfidences', 'temp_profileTarget', 'temp_profileJob']);
   });
 
   const historyList = document.getElementById('cdp-history-list');
@@ -272,12 +300,16 @@ document.addEventListener('DOMContentLoaded', () => {
 function updateProfileFields(mode) {
   const profileTone = document.getElementById('cdp-profile-tone');
   const profileExp = document.getElementById('cdp-profile-exp');
+  const profileTarget = document.getElementById('cdp-profile-target');
+  const profileJob = document.getElementById('cdp-profile-job');
   const profileEpisode = document.getElementById('cdp-profile-episode');
   const profilePersona = document.getElementById('cdp-profile-persona');
-  if (!profileTone || !profileExp || !profileEpisode || !profilePersona) return;
+  if (!profileTone || !profileExp || !profileTarget || !profileJob || !profileEpisode || !profilePersona) return;
 
   const labelTone = document.getElementById('cdp-label-tone');
   const labelExp = document.getElementById('cdp-label-exp');
+  const labelTarget = document.getElementById('cdp-label-target');
+  const labelJob = document.getElementById('cdp-label-job');
   const labelEpisode = document.getElementById('cdp-label-episode');
 
   if (mode === 'resume') {
@@ -285,6 +317,10 @@ function updateProfileFields(mode) {
     profileTone.placeholder = '예: 차분하고 신뢰감을 주는 존댓말';
     if (labelExp) labelExp.innerText = '경력 및 백그라운드';
     profileExp.placeholder = '예: 3년차 프론트엔드 개발자';
+    if (labelTarget) labelTarget.innerText = '지원회사';
+    profileTarget.placeholder = '예: 네이버';
+    if (labelJob) labelJob.innerText = '업직종';
+    profileJob.placeholder = '예: IT/프론트엔드 개발자';
     if (labelEpisode) labelEpisode.innerText = '핵심 강점/에피소드';
     profileEpisode.placeholder = '자소서에 녹여내고 싶은 나만의 구체적인 에피소드나 역량 키워드';
   } else if (mode === 'email') {
@@ -292,6 +328,10 @@ function updateProfileFields(mode) {
     profileTone.placeholder = '예: 격식 있고 정중한 비즈니스 톤';
     if (labelExp) labelExp.innerText = '발신자 직무/직책 및 회사';
     profileExp.placeholder = '예: ABC테크 마케팅팀 대리';
+    if (labelTarget) labelTarget.innerText = '수신자 정보';
+    profileTarget.placeholder = '예: 프로젝트 협력사';
+    if (labelJob) labelJob.innerText = '관계/직급';
+    profileJob.placeholder = '예: 담당 실장님';
     if (labelEpisode) labelEpisode.innerText = '자주 쓰는 문맥/요건';
     profileEpisode.placeholder = '이메일 본문에 자주 들어가는 주요 요청사항이나 양식 안내';
   } else if (mode === 'sns') {
@@ -299,6 +339,10 @@ function updateProfileFields(mode) {
     profileTone.placeholder = '예: 친근하고 이웃 소통을 이끄는 반말';
     if (labelExp) labelExp.innerText = '채널 주제 및 타깃';
     profileExp.placeholder = '예: IT 테크 정보 리뷰 블로그';
+    if (labelTarget) labelTarget.innerText = '채널 주제';
+    profileTarget.placeholder = '예: IT 테크 정보 리뷰';
+    if (labelJob) labelJob.innerText = '타깃 독자층 및 관심사';
+    profileJob.placeholder = '예: 2030 IT/테크 얼리어답터';
     if (labelEpisode) labelEpisode.innerText = '해시태그 및 핵심 키워드';
     profileEpisode.placeholder = '포스팅에 자주 삽입하고 싶은 대표 키워드와 태그 목록';
   }
@@ -307,22 +351,33 @@ function updateProfileFields(mode) {
   chrome.storage.local.get([
     `${mode}_profileTone`, 
     `${mode}_profileExp`, 
+    `${mode}_profileTarget`,
+    `${mode}_profileJob`,
     `${mode}_profileEpisode`,
     `${mode}_profilePersona`
   ], (res) => {
     profileTone.value = res[`${mode}_profileTone`] || '';
     profileExp.value = res[`${mode}_profileExp`] || '';
+    profileTarget.value = res[`${mode}_profileTarget`] || '';
+    profileJob.value = res[`${mode}_profileJob`] || '';
     profileEpisode.value = res[`${mode}_profileEpisode`] || '';
     profilePersona.value = res[`${mode}_profilePersona`] || 'professor';
   });
 }
 
 // 하이라이팅 렌더링
-function renderHumanizedResult(text) {
+function renderHumanizedResult(text, warnings) {
   const resultView = document.getElementById('cdp-humanized-result');
   if (!resultView) return;
   let html = text
     .replace(/(할 수 있었습니다|프로세스를 효율적으로|정중하고 부드러운|자연스럽게|성장하며|역량이|전문성은|신뢰감을|정중하고|요청이나|피드백이|협업을|이끌어내도록|몸에 익힐|자리 잡았습니다|도출하는 데|보완하여|극대화할 수)/g, '<span class="cdp-highlight">$1</span>');
+
+  // 경고 알림 문구가 존재할 시 상단 경고 배너 삽입
+  if (warnings && warnings.length > 0) {
+    const warningBanner = `<div class="cdp-warning-banner" style="background-color: #FEF3C7; border: 1px solid #F59E0B; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: 11.5px; color: #92400E; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box; line-height: 1.4;"><div style="font-weight: 700; display: flex; align-items: center; gap: 4px; border-bottom: 1px solid rgba(245, 158, 11, 0.3); padding-bottom: 4px; margin-bottom: 2px;">⚠️ 입력 문맥 분석 주의 알림</div><div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">${warnings.map(w => `<div style="display: flex; gap: 6px; align-items: flex-start; line-height: 1.4;"><span style="color: #F59E0B; font-weight: bold; flex-shrink: 0;">•</span><span style="flex-grow: 1;">${w}</span></div>`).join('')}</div></div>`;
+    html = warningBanner + html;
+  }
+
   resultView.innerHTML = html;
 }
 
