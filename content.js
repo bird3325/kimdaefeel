@@ -290,10 +290,9 @@ function showFloatingButton(targetEl) {
         z-index: 10000000 !important;
         width: 32px !important;
         height: 32px !important;
-        border-radius: 50% !important;
-        background: linear-gradient(135deg, #1E40AF 0%, #0D9488 100%) !important;
-        border: 2px solid #FFFFFF !important;
-        box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35) !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
         cursor: pointer !important;
         display: flex !important;
         align-items: center !important;
@@ -303,11 +302,12 @@ function showFloatingButton(targetEl) {
       }
       .cdp-floating-btn:hover {
         transform: scale(1.15) translateY(-2px) !important;
-        box-shadow: 0 6px 20px rgba(13, 148, 136, 0.5) !important;
       }
-      .cdp-floating-btn svg {
-        width: 15px !important;
-        height: 15px !important;
+      .cdp-floating-btn img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain !important;
+        filter: none !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -318,11 +318,9 @@ function showFloatingButton(targetEl) {
     floatingBtn.className = 'cdp-floating-btn';
     floatingBtn.title = '김대필 (자연화 텍스트 삽입)';
 
-    // 번개 모양 또는 AI 아이콘 느낌의 간단한 SVG 삽입
+    // 김대필 아이콘 png 이미지 삽입
     floatingBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-      </svg>
+      <img src="${chrome.runtime.getURL('icons/icon24.png')}" width="32" height="32" alt="로고" style="display: block; object-fit: contain;">
     `;
 
     // 클릭 시 해당 인풋에 입력되어 있는 텍스트를 사이드바의 AI 초안에 추가하고 사이드바 열기
@@ -421,10 +419,9 @@ function createSidebarDOM() {
       z-index: 10000000;
       width: 32px;
       height: 32px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #1E40AF 0%, #0D9488 100%);
-      border: 2px solid #FFFFFF;
-      box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
+      background: transparent;
+      border: none;
+      box-shadow: none;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -434,11 +431,11 @@ function createSidebarDOM() {
     }
     .cdp-floating-btn:hover {
       transform: scale(1.15) translateY(-2px);
-      box-shadow: 0 6px 20px rgba(13, 148, 136, 0.5);
     }
-    .cdp-floating-btn svg {
-      width: 15px;
-      height: 15px;
+    .cdp-floating-btn img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
     }
 
     /* 2. 슬라이드인 사이드바 컨테이너 */
@@ -985,9 +982,7 @@ function createSidebarDOM() {
     <!-- 헤더 -->
     <div class="cdp-header">
       <h3 class="cdp-header-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: middle;">
-          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-        </svg>
+        <img src="${chrome.runtime.getURL('icons/icon24.png')}" width="18" height="18" alt="로고" style="vertical-align: middle; margin-right: 4px; object-fit: contain;">
         김대필
       </h3>
       <div class="cdp-header-controls">
