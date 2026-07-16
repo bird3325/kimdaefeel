@@ -8,6 +8,11 @@
     "activeTab",
     "contextMenus"
   ],
+  "host_permissions": [
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://integrate.api.nvidia.com/*"
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "24": "icons/icon24.png",
@@ -20,7 +25,21 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "https://*.naver.com/*",
+        "https://*.daum.net/*",
+        "https://mail.google.com/*",
+        "https://*.notion.so/*",
+        "https://*.notion.site/*",
+        "https://*.saramin.co.kr/*",
+        "https://*.jobkorea.co.kr/*",
+        "https://*.wanted.co.kr/*",
+        "https://*.jasoseol.com/*",
+        "https://*.linkareer.com/*",
+        "https://*.tistory.com/*",
+        "https://*.velog.io/*",
+        "https://*.instagram.com/*",
+        "https://*.facebook.com/*",
+        "https://*.threads.net/*"
       ],
       "js": [
         "content.js"
@@ -44,7 +63,21 @@
         "icons/flogo.png"
       ],
       "matches": [
-        "<all_urls>"
+        "https://*.naver.com/*",
+        "https://*.daum.net/*",
+        "https://mail.google.com/*",
+        "https://*.notion.so/*",
+        "https://*.notion.site/*",
+        "https://*.saramin.co.kr/*",
+        "https://*.jobkorea.co.kr/*",
+        "https://*.wanted.co.kr/*",
+        "https://*.jasoseol.com/*",
+        "https://*.linkareer.com/*",
+        "https://*.tistory.com/*",
+        "https://*.velog.io/*",
+        "https://*.instagram.com/*",
+        "https://*.facebook.com/*",
+        "https://*.threads.net/*"
       ]
     }
   ],
