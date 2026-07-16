@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>개인정보처리방침 - 김대필 (ContextWrite)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+            line-height: 1.7;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background-color: #fafafa;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e5e7eb;
+        }
+        h1 {
+            font-size: 28px;
+            color: #1e3a8a;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 15px;
+            margin-top: 0;
+        }
+        h2 {
+            font-size: 20px;
+            color: #0f766e;
+            margin-top: 30px;
+            border-left: 4px solid #0f766e;
+            padding-left: 10px;
+        }
+        p, li {
+            font-size: 15px;
+            color: #4b5563;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        .footer {
+            margin-top: 50px;
+            font-size: 13px;
+            color: #9ca3af;
+            text-align: center;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>개인정보처리방침</h1>
+        <p>본 개인정보처리방침은 크롬 확장 프로그램 <strong>'김대필 (ContextWrite)'</strong>(이하 '서비스')의 이용과 관련하여, 서비스가 사용자의 개인정보를 어떻게 처리하고 보호하는지 안내하기 위해 작성되었습니다.</p>
+        
+        <h2>1. 개인정보의 수집 항목 및 목적</h2>
+        <p>서비스는 사용자가 수동으로 선택하여 요청한 작문 및 변환 기능의 수행을 위한 목적에 한해서만 최소한의 정보를 수집 및 처리하며, 이를 마케팅이나 외부 제3자에게 제공할 목적으로 무단 수집하지 않습니다.</p>
+        <ul>
+            <li><strong>AI 자연화 변환용 초안 데이터:</strong> 사용자가 자연스러운 문장으로 윤문을 요청하기 위해 입력한 텍스트 및 관련 문맥(URL 패턴, 작성 모드 등)</li>
+            <li><strong>AI API 연동 설정 정보:</strong> 사용자가 설정 페이지에 직접 등록한 API Key 및 연동 설정(브라우저 로컬 스토리지에 저장되어 외부로 절대 공유되지 않음)</li>
+        </ul>
+
+        <h2>2. 개인정보의 저장 및 처리 방식 (로컬 지향 보안)</h2>
+        <p>서비스는 프라이버시 보호를 최우선으로 하여 설계되었습니다.</p>
+        <ul>
+            <li><strong>브라우저 내 로컬 보존:</strong> 사용자의 API Key 및 작성 프로필(어조, 경력, 에피소드 등) 정보는 사용자의 기기 내부 저장소(chrome.storage.local)에 암호화 또는 격리된 상태로 안전하게 보관되며, 서비스 제공자의 별도 서버로 전송되거나 축적되지 않습니다.</li>
+            <li><strong>안전한 외부 API 전송:</strong> 변환 요청이 발생할 시 사용자가 지정한 공식 AI 제공사(OpenAI, Google Gemini, NVIDIA NIM API)의 공인 규격 보안 서버로만 실시간 연동 처리됩니다.</li>
+        </ul>
+
+        <h2>3. 민감 정보 차단 필터 (Privacy Guard)</h2>
+        <p>서비스는 비밀번호 입력 필드(type="password"), 신용카드 폼, 인터넷 뱅킹 및 금융 관련 도메인의 폼 데이터를 자동으로 감지하여 데이터 분석 및 수집 범위에서 즉각 원천 제외하는 블랙리스트 가드레일을 기본 실행합니다.</p>
+
+        <h2>4. 정보주체의 권리 및 연락처</h2>
+        <p>사용자는 언제든지 크롬 확장 프로그램 삭제 및 설정 초기화를 통해 로컬에 저장된 모든 API 설정 및 수집 데이터를 스스로 완전히 영구 파괴하실 수 있습니다.</p>
+        <p>서비스와 관련하여 개인정보 관련 문의사항이나 피드백이 있으신 경우, 개발자 지원 창구를 통해 연락해 주시기 바랍니다.</p>
+
+        <div class="footer">
+            <p>시행일자: 2026년 7월 16일<br>© 2026 김대필 (ContextWrite). All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
