@@ -25,7 +25,8 @@ const MODES = {
     name: '비즈니스 이메일 모드',
     urls: [
       'mail.naver.com', 'mail.google.com', 'outlook.office.com', 'gmail.com',
-      'mail', 'outlook', 'gmail', 'messenger'
+      'mail.daum.net', 'hanmail.net', 'daum.net', 'mail.nate.com', 'nate.com',
+      'works.naver.com', 'worksmobile.com', 'mail', 'outlook', 'gmail', 'messenger'
     ],
     keywords: ['이메일', '메일', '답장', '업무', 'mail', 'outlook', 'gmail', 'send', '수신', '발신', '참조'],
     coreKeywords: ['이메일', '메일', 'email', 'gmail', 'outlook', '받는사람', '보낸사람']
@@ -40,6 +41,27 @@ const MODES = {
     coreKeywords: ['블로그', '포스팅', '댓글', 'blog', 'instagram', '인스타', 'tistory', 'velog', '피드']
   }
 };
+
+// 3.1 우클릭 컨텍스트 메뉴 생성 및 연동
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: "send-to-kimdaefeel",
+    title: "김대필 작성해줘.",
+    contexts: ["selection", "editable"]
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "send-to-kimdaefeel" && tab && tab.id) {
+    const textToSend = info.selectionText || '';
+    chrome.tabs.sendMessage(tab.id, {
+      action: 'sync-sidebar-from-iframe',
+      text: textToSend
+    }).catch(err => {
+      console.log("컨텍스트 메뉴 메시지 전송 실패:", err);
+    });
+  }
+});
 
 // 3. 브라우저 액션 아이콘 클릭 시 사이드바 토글 메시지 전송
 chrome.action.onClicked.addListener((tab) => {
@@ -96,7 +118,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * 맥락 분석 처리 함수
  */
 function handleAnalyzeContext(data, sendResponse) {
-  const { url, title, placeholder, label } = data;
+  const { url, title, placeholder, label, id, className } = data;
 
   // 4.1 블랙리스트 검사
   const hostname = getHostname(url);
@@ -126,7 +148,7 @@ function handleAnalyzeContext(data, sendResponse) {
     }
 
     // 2. 핵심 키워드(Core Keyword) 감지 시 보너스 부여 (+40점)
-    const checkTarget = `${title || ''} ${placeholder || ''} ${label || ''}`.toLowerCase();
+    const checkTarget = `${title || ''} ${placeholder || ''} ${label || ''} ${id || ''} ${className || ''}`.toLowerCase();
     if (config.coreKeywords.some(core => checkTarget.includes(core))) {
       score += 40;
     }
@@ -160,6 +182,10 @@ function handleAnalyzeContext(data, sendResponse) {
   });
 }
 
+// 4.3 자연화 변환용 로컬 캐시 (동일 텍스트/모드 중복 변환 시 0초 즉각 반환 목적)
+const humanizeCache = new Map();
+const MAX_CACHE_SIZE = 30;
+
 /**
  * Humanize 자연화 처리 함수
  */
@@ -171,23 +197,64 @@ async function handleHumanize(data, sendResponse) {
     return;
   }
 
+  // 1. 고유 캐시 키 조립 및 캐시 히트 체크
+  const cacheKey = JSON.stringify({
+    text: text.trim(),
+    level: level,
+    mode: mode,
+    tone: profile?.tone || '',
+    experience: profile?.experience || '',
+    target: profile?.target || '',
+    job: profile?.job || '',
+    episode: profile?.episode || '',
+    charLimit: charLimit || null,
+    customInstruction: customInstruction || ''
+  });
+
+  if (humanizeCache.has(cacheKey)) {
+    console.log('⚡ [김대필 캐시 히트] 동일한 변환 요청 감지 - 외부 API 호출을 생략하고 0초 만에 캐시된 결과를 즉각 반환합니다.');
+    sendResponse(humanizeCache.get(cacheKey));
+    return;
+  }
+
+  if (!text || text.trim() === '') {
+    sendResponse({ success: false, error: '텍스트가 비어 있습니다.' });
+    return;
+  }
+
   // 5.2 크롬 스토리지에서 AI 연동 키 및 모델 로드
-  let provider = 'simulation';
-  let apiModel = '';
-  let apiKey = '';
+  const DEFAULT_NVIDIA_KEY = "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";
+  let provider = 'default_nvidia';
+  let apiModel = 'nvidia/nemotron-mini-4b-instruct';
+  let apiKey = DEFAULT_NVIDIA_KEY;
   let customPolicy = '';
 
   try {
     const settings = await new Promise((resolve) => {
       chrome.storage.local.get(['aiProvider', 'aiModel', 'apiKey', 'factProtectionPolicy'], resolve);
     });
-    provider = settings.aiProvider || 'simulation';
-    apiModel = settings.aiModel || '';
-    apiKey = settings.apiKey || '';
+    provider = settings.aiProvider || 'default_nvidia';
+    
+    // 기본 모델 모드인 경우, 스토리지에 잘못 남겨진 옛날 만료 키를 완전히 무시하고
+    // 코드 내부의 검증 완료된 진짜 유효한 DEFAULT_NVIDIA_KEY를 100% 강제 사용하여 403 차단 에러 원천 해결
+    if (provider === 'default_nvidia') {
+      apiKey = DEFAULT_NVIDIA_KEY;
+      apiModel = 'nvidia/nemotron-mini-4b-instruct';
+    } else {
+      apiModel = settings.aiModel || 'nvidia/nemotron-mini-4b-instruct';
+      apiKey = settings.apiKey || DEFAULT_NVIDIA_KEY;
+    }
     customPolicy = settings.factProtectionPolicy || '';
   } catch (err) {
     console.error('스토리지 연동 정보 로드 실패:', err);
   }
+
+  // 백그라운드 디버깅용 콘솔 로그
+  console.log('--- [김대필 AI 변환 데이터 디버깅] ---');
+  console.log('제공사:', provider);
+  console.log('모델명:', apiModel);
+  console.log('가져온 프로필 객체:', profile);
+  console.log('원문 초안 텍스트:', text);
 
   // 5.1 사실 관계 보호 가드레일 선언 (AI가 인식했다고 가정하는 프롬프트 규격 예시)
   const defaultPolicy = `
@@ -213,7 +280,7 @@ async function handleHumanize(data, sendResponse) {
       
       let customInstructionRule = '';
       if (customInstruction && customInstruction.trim() !== '') {
-        customInstructionRule = `\n8. 특별 추가 요청사항: 이 문장을 다듬을 때는 반드시 다음의 구체적 지시사항을 최우선으로 반영하여 문맥을 다듬어주세요: "${customInstruction}"`;
+        customInstructionRule = `\n11. 최우선 개선 반영사항: 사용자가 작성한 다음 개선 요청에 맞게 본문 텍스트의 구조, 톤, 스타일 또는 특정 사안을 '반드시 최우선적으로 적극 반영'하여 교정하십시오: "${customInstruction}"`;
       }
 
       // 페르소나 설명 정의
@@ -228,18 +295,33 @@ async function handleHumanize(data, sendResponse) {
         personaDesc = `당신은 친근하고 세련된 언어를 사용하는 파워 블로거이자 SNS 인플루언서입니다. 블로그 포스팅과 SNS 피드 문맥에 걸맞게 가독성이 뛰어나며 이웃의 편안한 소통을 이끌어내는 친근하고 부드러운 말투로 사용자의 본문 텍스트를 자연화(Humanize) 및 교정해 주십시오. 상황에 맞춰 적절하고 귀여운 유니코드 이모지(Emoji)도 문장 중간중간에 자연스럽게 삽입해 주십시오.`;
       }
 
-      const systemMsg = `${personaDesc} 결과물은 부연 설명 없이 최종 완성형 한국어 본문으로만 출력해야 합니다.
+      const systemMsg = `[🚨CRITICAL: 100% KOREAN ONLY. NO ENGLISH. NO CHAT.]
+${personaDesc} 결과물은 사족 없이 한국어(KOREAN) 최종본만 출력해야 합니다.
 ${Fact_Protection_Lock}
-[요청 규칙]
-1. 출력 언어: 반드시 100% 한글(한국어)로만 답변을 작성하십시오. 영어로 응답해서는 절대로 안 됩니다.
-2. 작성 모드: ${mode === 'resume' ? '자기소개서/이력서' : mode === 'email' ? '비즈니스 이메일' : '블로그/SNS'}에 최적화하여 어색한 외래어 번역투나 결함이 있는 비문을 철저히 배제하고 명료하며 정확한 문체로 정돈해 주세요.
-3. 자연화 강도: ${promptLevelStr} 수준으로 반영하되, 문법적 결함이나 맞춤법 오류는 강도와 무관하게 항상 완벽히 교정해야 합니다.
-4. 말투/톤: 지정된 규범과 톤에 어울리는 올바르고 품위 있는 ${tone} 분위기를 명확히 투영하십시오.
-5. 사용자 백그라운드 경험: ${experience}
-6. ${mode === 'resume' ? '지원회사' : mode === 'email' ? '수신자 정보' : '채널 주제'}: ${target}
-7. ${mode === 'resume' ? '업직종' : mode === 'email' ? '관계/직급' : '타깃 독자층 및 관심사'}: ${job}
-8. 반영하고 싶은 에피소드: ${episode}
-9. 어떠한 사족이나 설명 없이, 지정된 페르소나 지침에 완벽히 교정된 최종 완성형 한국어 텍스트만 답변해주세요.${customInstructionRule}`;
+[작성 규정]
+1. 작성 모드: ${mode === 'resume' ? '자기소개서/이력서' : mode === 'email' ? '비즈니스 이메일' : '블로그/SNS'}에 최적화하여 비문 없이 정확하고 세련된 문체로 정돈해 주세요.
+2. 초안 보존 원칙: 원본 초안의 뼈대와 팩트를 기본 토대로 다듬어야 합니다.
+3. 자연화 강도: ${promptLevelStr} 수준으로 반영하십시오.
+4. 말투/톤: ${tone} 분위기를 명확히 반영하십시오.
+5. 사용자 프로필: 경력 [${experience}], 지원대상 [${target}], 직무 [${job}]
+6. 에피소드 반영: "${episode}" (※글의 맥락에 알맞게 녹여내어 '반드시 결과물 본문 내에 노출'되도록 작성하십시오.)
+7. 문단 분리 및 개행: 의미적 주장이 바뀌거나 문맥이 전환될 때(2~3문장 간격)마다 반드시 2번의 줄바꿈(\\n\\n)을 실행하여 글을 여러 개의 쪼개진 문단으로 명확히 구분하십시오. 줄바꿈 없는 한 덩어리의 긴 글은 절대로 허용하지 않습니다.
+8. 사족, 코드블록, 영어 번역 결과물은 절대로 배제하고 최종 한글 텍스트 자체만 출력해주십시오.${customInstructionRule}`;
+
+      const userMsg = `[🚨대필/자연화 핵심 지시사항 - 반드시 첫 문단이나 글의 시작부에 다음 에피소드를 문맥에 어울리는 구체적인 문장으로 직접 작성하여 포함시키십시오. 또한 문맥의 논리적 전환 지점마다 2번의 줄바꿈(\\n\\n)을 넉넉히 주어 가독성 있게 작성하십시오. 절대 생략해서는 안 됩니다.]
+
+■ 🚨무조건 본문에 추가할 핵심 강점 및 에피소드:
+"${episode}"
+
+■ 기타 프로필 맥락 정보:
+- 어조 및 말투: ${tone}
+- 지원회사/관계: ${target || '지정 없음'}
+- 분야/직무: ${job || '지정 없음'}
+- 작성자 경력: ${experience || '없음'}
+- 개선 요청사항: ${customInstruction || '없음'}
+
+■ 변환 대상 원본 초안:
+"${text}"`;
 
       let responseText = '';
 
@@ -255,11 +337,16 @@ ${Fact_Protection_Lock}
             model: modelName,
             messages: [
               { role: 'system', content: systemMsg },
-              { role: 'user', content: text }
+              { role: 'user', content: userMsg }
             ],
-            temperature: 0.7
+            temperature: 0.3,
+            max_tokens: 800
           })
         });
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`OpenAI HTTP 에러 (${response.status}): ${errText}`);
+        }
         const json = await response.json();
         if (json.choices && json.choices[0]) {
           responseText = json.choices[0].message.content.trim();
@@ -277,11 +364,19 @@ ${Fact_Protection_Lock}
           body: JSON.stringify({
             contents: [{
               parts: [{
-                text: `${systemMsg}\n\n사용자 본문:\n${text}`
+                text: `${systemMsg}\n\n${userMsg}`
               }]
-            }]
+            }],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 800
+            }
           })
         });
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`Gemini HTTP 에러 (${response.status}): ${errText}`);
+        }
         const json = await response.json();
         if (json.candidates && json.candidates[0].content.parts[0]) {
           responseText = json.candidates[0].content.parts[0].text.trim();
@@ -289,7 +384,7 @@ ${Fact_Protection_Lock}
         } else {
           throw new Error(json.error?.message || 'Gemini API 응답 실패');
         }
-      } else if (provider === 'nvidia') {
+      } else if (provider === 'nvidia' || provider === 'default_nvidia') {
         const modelName = apiModel || 'meta/llama-3.3-70b-instruct';
         const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
           method: 'POST',
@@ -301,12 +396,16 @@ ${Fact_Protection_Lock}
             model: modelName,
             messages: [
               { role: 'system', content: systemMsg },
-              { role: 'user', content: text }
+              { role: 'user', content: userMsg }
             ],
-            temperature: 0.7,
-            max_tokens: 1024
+            temperature: 0.3,
+            max_tokens: 800
           })
         });
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`NVIDIA HTTP 에러 (${response.status}): ${errText}`);
+        }
         const json = await response.json();
         if (json.choices && json.choices[0]) {
           responseText = json.choices[0].message.content.trim();
@@ -317,117 +416,31 @@ ${Fact_Protection_Lock}
       }
 
       if (apiCallSuccess && responseText) {
-        resultText = responseText;
+        // 결과 텍스트의 맨 앞과 맨 뒤를 감싸고 있는 불필요한 큰따옴표("") 및 작은따옴표('') 제거
+        resultText = responseText.replace(/^["']|["']$/g, '').trim();
       }
     } catch (apiErr) {
-      console.error(`[AI API 호출 에러 - 폴백 시뮬레이터 가동]:`, apiErr);
+      console.error(`[AI API 호출 에러]:`, apiErr);
+      sendResponse({
+        success: false,
+        error: `AI API 호출 중 오류가 발생했습니다: ${apiErr.message}`
+      });
+      return;
     }
+  } else {
+    sendResponse({
+      success: false,
+      error: 'AI 모델 제공사(Provider) 또는 API Key가 등록되지 않았습니다. 설정 페이지에서 확인해주세요.'
+    });
+    return;
   }
 
-  // API 호출 실패 시 또는 시뮬레이션 모드일 때 폴백 교정 실행
-  if (!apiCallSuccess) {
-    const tone = profile?.tone || '';
-    const experience = profile?.experience || '';
-    const target = profile?.target || '';
-    const job = profile?.job || '';
-    const episode = profile?.episode || '';
-    
-    // 기계적 번역투 및 어색한 종결어미 교정
-    let polished = text
-      .replace(/~에 있어서/g, '~에서')
-      .replace(/~로 인하여/g, '~ 때문에')
-      .replace(/~에 대한 조사/g, '~를 조사')
-      .replace(/을\/를 진행하였습니다/g, '을 진행했습니다')
-      .replace(/을 수행하였습니다/g, '을 수행했습니다')
-      .replace(/습관화 할 수 있었습니다/g, '자연스럽게 저의 습관으로 정착시켰습니다')
-      .replace(/다름이 아니라/g, '')
-      .trim();
-
-    // 문장의 끝을 부드럽게 윤문 (말투/톤 설정 반영)
-    if (tone.includes('존댓말') || tone.includes('정중') || tone.includes('격식') || tone.includes('존칭')) {
-      polished = polished
-        .replace(/했다\./g, '했습니다.')
-        .replace(/있다\./g, '있습니다.')
-        .replace(/한다\./g, '합니다.')
-        .replace(/된다\./g, '됩니다.');
-    }
-
-    if (level === 'light') {
-      // Light: 맞춤법, 띄어쓰기 및 종결어미 위주의 가벼운 보정
-      resultText = polished;
-    } else if (level === 'medium') {
-      // Medium: 문장 흐름을 매끄럽게 가독성 위주로 다듬음
-      if (mode === 'resume') {
-        let intro = '';
-        if (target || job) {
-          intro = `${target ? target + ' ' : ''}${job ? job + ' 직무 ' : '분야 '}합류를 위해 `;
-        }
-        if (experience && experience !== '없음') {
-          intro += `${experience}로서 노력해 왔습니다. `;
-        }
-        resultText = `${intro}${polished}`;
-      } else if (mode === 'email') {
-        let emailIntro = `안녕하세요, ${target ? target + ' ' : ''}${job ? job + ' 님' : '담당자님'}.\n\n`;
-        resultText = `${emailIntro}${polished}\n\n추가 검토 사항이 있으시면 회신 바랍니다.`;
-      } else {
-        resultText = polished;
-      }
-    } else if (level === 'strong') {
-      // Strong: 완벽한 재작성 및 프로필, 에피소드, 요청사항의 유기적 결합
-      if (mode === 'resume') {
-        let intro = `그동안 `;
-        if (experience && experience !== '없음') {
-          intro += `${experience}로서 실무 전문성을 차분히 다져왔습니다. `;
-        }
-        if (target || job) {
-          intro += `특히 이번에 ${target ? target + '의 ' : ''}${job ? job + ' 업직종에 ' : '해당 분야에 '}지원하며 저만의 역량을 새롭게 발휘하고자 합니다. `;
-        }
-
-        let body = `작성된 내용처럼, "${polished.replace(/\.$/, '')}"이라는 핵심 지향점은 실제 저의 업무 철학이기도 합니다.`;
-        if (episode) {
-          body += ` 실례로, ${episode}를 완수하는 과정에서도 이러한 가치와 주도적 실행력이 성공 요인으로 크게 기여했습니다.`;
-        }
-
-        let conclusion = `앞으로도 축적된 역량을 바탕으로 원활한 협업을 이끌어내겠습니다.`;
-        if (customInstruction) {
-          conclusion += ` 특히 "${customInstruction}" 지시사항을 마음에 새기고 성과를 만들어 가겠습니다.`;
-        }
-
-        resultText = `${intro}\n\n${body}\n\n${conclusion}`;
-      } else if (mode === 'email') {
-        let greeting = `안녕하세요, ${target ? target + ' ' : ''}${job ? job + ' 님' : '담당자님'}.\n`;
-        if (experience && experience !== '없음') {
-          greeting += `${experience} 담당자입니다.\n\n`;
-        } else {
-          greeting += '보내주신 내용 잘 검토하였습니다.\n\n';
-        }
-
-        let body = `기재해주신 사안과 관련하여, "${polished.replace(/\.$/, '')}"라는 방향성을 기본으로 삼고자 합니다.`;
-        if (episode) {
-          body += ` 요청 주신 '${episode}' 세부 계획에 맞추어 업무 일정을 긴밀하게 조율 중에 있습니다.`;
-        }
-
-        let footer = `\n\n추가로 의견 주신 "${customInstruction || '내용'}"에 대해서도 면밀히 반영하여 차질 없이 진행하겠습니다.\n감사합니다.`;
-
-        resultText = `${greeting}${body}${footer}`;
-      } else if (mode === 'sns') {
-        let intro = `✨ [${target || '알림'}] ${job ? '#' + job.replace(/\s+/g, '') : ''} 소식을 나눕니다!\n\n`;
-        let body = `📝 ${polished}\n\n`;
-        if (episode) {
-          body += `개인적으로 '${episode}' 때의 특별한 순간이 다시금 기억에 남는 대목이네요. `;
-        }
-        if (experience) {
-          body += `아무래도 제가 ${experience}로서 느꼈던 보람이 잘 녹아있는 글입니다. `;
-        }
-        
-        let hashtags = `\n\n#김대필 #자연화변환 #${mode}`;
-        if (customInstruction) {
-          hashtags += ` #${customInstruction.replace(/\s+/g, '')}`;
-        }
-        
-        resultText = `${intro}${body}${hashtags}`;
-      }
-    }
+  if (!apiCallSuccess || !resultText) {
+    sendResponse({
+      success: false,
+      error: 'AI 자연화 변환 처리에 실패했습니다. API 키 및 네트워크 상태를 확인해주세요.'
+    });
+    return;
   }
 
   // 글자수 제한(charLimit)에 따른 자르기 처리
@@ -483,8 +496,8 @@ ${Fact_Protection_Lock}
   const contradictionWarnings = detectFactualContradictions(text, profile, mode);
   warnings.push(...contradictionWarnings);
 
-  // 최종 응답 반환
-  sendResponse({
+  // 최종 응답 객체 조립
+  const finalResponse = {
     success: true,
     originalText: text,
     humanizedText: resultText,
@@ -492,7 +505,18 @@ ${Fact_Protection_Lock}
     atsScore: atsScore,
     warnings: warnings,
     modelUsed: apiCallSuccess ? (apiModel || (provider === 'openai' ? 'gpt-4o-mini' : provider === 'gemini' ? 'gemini-2.0-flash' : 'meta/llama-3.3-70b-instruct')) : '로컬 시뮬레이터 (Local Simulator)'
-  });
+  };
+
+  // 2. 캐시 사이즈 조절 및 신규 응답 캐싱 저장
+  if (humanizeCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = humanizeCache.keys().next().value;
+    humanizeCache.delete(oldestKey);
+  }
+  
+  humanizeCache.set(cacheKey, finalResponse);
+
+  // 최종 응답 반환
+  sendResponse(finalResponse);
 }
 
 /**

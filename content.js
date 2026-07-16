@@ -33,32 +33,34 @@ function onDomReady() {
   window.addEventListener('scroll', updateFloatingBtnPosition, true);
 
   // 백그라운드 서비스 워커로부터 메시지 수신 (사이드바 토글 등)
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'toggle-sidebar') {
-      if (window === window.top) toggleSidebar();
-    } else if (message.action === 'sync-sidebar-from-iframe') {
-      if (window === window.top) {
-        const shadow = sidebarRoot ? sidebarRoot.shadowRoot : null;
-        if (shadow) {
-          const origInput = shadow.getElementById('cdp-original-input');
-          if (origInput) {
-            origInput.value = message.text;
-            origInput.dispatchEvent(new Event('input', { bubbles: true }));
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.action === 'toggle-sidebar') {
+        if (window === window.top) toggleSidebar();
+      } else if (message.action === 'sync-sidebar-from-iframe') {
+        if (window === window.top) {
+          const shadow = sidebarRoot ? sidebarRoot.shadowRoot : null;
+          if (shadow) {
+            const origInput = shadow.getElementById('cdp-original-input');
+            if (origInput) {
+              origInput.value = message.text;
+              origInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
           }
+          openSidebar();
+          showNotification('선택한 입력창의 텍스트가 AI 초안에 추가되었습니다.');
         }
-        openSidebar();
-        showNotification('선택한 입력창의 텍스트가 AI 초안에 추가되었습니다.');
+      } else if (message.action === 'insert-text') {
+        if (message.text) {
+          insertTextToActiveElement(message.text);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: false, error: '삽입할 텍스트가 없습니다.' });
+        }
+        return false;
       }
-    } else if (message.action === 'insert-text') {
-      if (message.text) {
-        insertTextToActiveElement(message.text);
-        sendResponse({ success: true });
-      } else {
-        sendResponse({ success: false, error: '삽입할 텍스트가 없습니다.' });
-      }
-      return false;
-    }
-  });
+    });
+  }
 
   // 사이드바 DOM 구조 생성
   createSidebarDOM();
@@ -88,6 +90,11 @@ function isRecipientOrSubjectField(el) {
   const parentId = el.parentElement ? (el.parentElement.id || '').toLowerCase() : '';
 
   const searchStr = `${id} ${className} ${name} ${placeholder} ${role} ${parentClass} ${parentId}`;
+  
+  // 네이버 웍스/메일 에디터 등 본문 에디터 영역 식별 시 주소/메타 입력창 제외 필터링에서 구제
+  if (searchStr.includes('workseditor') || searchStr.includes('editor') || searchStr.includes('classic')) {
+    return false;
+  }
   
   const ignoreKeywords = [
     'receiver', 'recipient', 'to', 'cc', 'bcc', 'address', 'addr', 'contact', 
@@ -213,8 +220,18 @@ function detectContextAndSync(el) {
     }
   }
 
-  const url = window.location.href;
-  const title = document.title;
+  let url = window.location.href;
+  if (url === 'about:blank' || !url.startsWith('http')) {
+    try {
+      url = window.top.location.href;
+    } catch (e) {}
+  }
+  let title = document.title;
+  if (!title || title === 'about:blank') {
+    try {
+      title = window.top.document.title;
+    } catch (e) {}
+  }
   const placeholder = el.placeholder || el.getAttribute('placeholder') || '';
 
   // 레이블 텍스트 수집 (가까운 label 태그 또는 aria-label 탐색)
@@ -228,7 +245,7 @@ function detectContextAndSync(el) {
   }
 
   // 0. 확장 프로그램 컨텍스트 유효성 검사
-  if (!chrome.runtime || !chrome.runtime.id) {
+  if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
     return;
   }
 
@@ -236,7 +253,7 @@ function detectContextAndSync(el) {
   try {
     chrome.runtime.sendMessage({
       action: 'analyze-context',
-      data: { url, title, placeholder, label: labelText }
+      data: { url, title, placeholder, label: labelText, id: el.id || '', className: el.className || '' }
     }, (response) => {
       if (chrome.runtime.lastError) {
         return;
@@ -259,8 +276,8 @@ function detectContextAndSync(el) {
         return;
       }
 
-      // 신뢰도가 80% 이상이고 자동 스위칭이 활성화되어 있을 때만 모드 자동 전환
-      if (isAutoModeEnabled && response.confidence >= 80) {
+      // 신뢰도가 70% 이상이고 자동 스위칭이 활성화되어 있을 때만 모드 자동 전환
+      if (isAutoModeEnabled && response.confidence >= 70) {
         currentDetectedMode = response.mode;
         updateSidebarModeUI(response.mode, response.confidence);
       } else {
@@ -290,9 +307,10 @@ function showFloatingButton(targetEl) {
         z-index: 10000000 !important;
         width: 32px !important;
         height: 32px !important;
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
+        background: linear-gradient(135deg, #1E3EA5, #111B35) !important;
+        border: 2px solid #FFFFFF !important;
+        border-radius: 50% !important;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15) !important;
         cursor: pointer !important;
         display: flex !important;
         align-items: center !important;
@@ -302,10 +320,11 @@ function showFloatingButton(targetEl) {
       }
       .cdp-floating-btn:hover {
         transform: scale(1.15) translateY(-2px) !important;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2) !important;
       }
       .cdp-floating-btn img {
-        width: 100% !important;
-        height: 100% !important;
+        width: 20px !important;
+        height: 20px !important;
         object-fit: contain !important;
         filter: none !important;
       }
@@ -320,7 +339,7 @@ function showFloatingButton(targetEl) {
 
     // 김대필 아이콘 png 이미지 삽입
     floatingBtn.innerHTML = `
-      <img src="${chrome.runtime.getURL('icons/icon24.png')}" width="32" height="32" alt="로고" style="display: block; object-fit: contain;">
+      <img src="${chrome.runtime.getURL('icons/top_logo.png')}" width="32" height="32" alt="로고" style="display: block; object-fit: contain;">
     `;
 
     // 클릭 시 해당 인풋에 입력되어 있는 텍스트를 사이드바의 AI 초안에 추가하고 사이드바 열기
@@ -688,12 +707,12 @@ function createSidebarDOM() {
       color: #1E293B;
     }
     .cdp-highlight {
-      background-color: rgba(13, 148, 136, 0.08);
-      border-bottom: 1.5px dashed #0D9488;
-      padding: 1px 2px;
-      border-radius: 4px;
-      font-weight: 500;
-      color: #0F766E;
+      background-color: rgba(13, 148, 136, 0.25) !important;
+      border-bottom: 2px solid #0D9488 !important;
+      padding: 1px 3px !important;
+      border-radius: 4px !important;
+      font-weight: 600 !important;
+      color: #0F766E !important;
     }
     .cdp-level-group {
       display: flex;
@@ -982,7 +1001,7 @@ function createSidebarDOM() {
     <!-- 헤더 -->
     <div class="cdp-header">
       <h3 class="cdp-header-title">
-        <img src="${chrome.runtime.getURL('icons/icon24.png')}" width="18" height="18" alt="로고" style="vertical-align: middle; margin-right: 4px; object-fit: contain;">
+        <img src="${chrome.runtime.getURL('icons/top_logo.png')}" width="20" height="20" alt="로고" style="display: block; object-fit: contain; transform: translateY(2px);">
         김대필
       </h3>
       <div class="cdp-header-controls">
@@ -1060,9 +1079,9 @@ function createSidebarDOM() {
         <p class="cdp-section-title">AI 초안 자연화 (Humanize)</p>
         
         <div class="cdp-textarea-wrapper">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label class="cdp-label">Original AI 초안</label>
-            <span id="cdp-orig-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+            <label class="cdp-label" style="white-space: nowrap; flex-shrink: 0;">Original AI 초안</label>
+            <span id="cdp-orig-char-count" style="font-size: 11px; color: #6B7280; white-space: nowrap; flex-shrink: 0; text-align: right; line-height: 1.3;">0자<br>(공백 제외 0자)</span>
           </div>
           <textarea class="cdp-textarea" id="cdp-original-input" placeholder="여기에 어색한 AI 초안을 입력하거나 문장을 작성하세요."></textarea>
         </div>
@@ -1089,11 +1108,11 @@ function createSidebarDOM() {
         </div>
 
         <div class="cdp-textarea-wrapper">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label class="cdp-label">Humanized 결과 (민트색: 개선된 문맥)</label>
-            <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+            <label class="cdp-label" style="white-space: nowrap; flex-shrink: 0;">Humanized 결과</label>
+            <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280; white-space: nowrap; flex-shrink: 0; text-align: right; line-height: 1.3;">0자<br>(공백 제외 0자)</span>
           </div>
-          <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.</div>
+          <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.</div>
           <div id="cdp-model-badge-container" style="display: flex; justify-content: flex-end; margin-top: 6px; margin-bottom: 2px;">
             <span id="cdp-model-badge" style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #64748B; background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 2px 8px; border-radius: 9999px; font-weight: 600; box-shadow: inset 0 1px 1px rgba(0,0,0,0.02); transition: all 0.2s;">
               <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background-color: #94A3B8;" id="cdp-model-status-dot"></span>
@@ -1185,7 +1204,7 @@ function bindSidebarEvents(shadow) {
 
     const origBadge = shadow.getElementById('cdp-orig-char-count');
     if (origBadge) {
-      origBadge.innerText = `${origCharCount}자 (공백 제외 ${origCharNoSpaceCount}자)`;
+      origBadge.innerHTML = `${origCharCount}자<br>(공백 제외 ${origCharNoSpaceCount}자)`;
     }
 
     const resultText = latestHumanizedText || '';
@@ -1194,7 +1213,7 @@ function bindSidebarEvents(shadow) {
 
     const resultBadge = shadow.getElementById('cdp-result-char-count');
     if (resultBadge) {
-      resultBadge.innerText = `${resultCharCount}자 (공백 제외 ${resultCharNoSpaceCount}자)`;
+      resultBadge.innerHTML = `${resultCharCount}자<br>(공백 제외 ${resultCharNoSpaceCount}자)`;
     }
   };
 
@@ -1339,21 +1358,51 @@ function bindSidebarEvents(shadow) {
     transformBtn.innerText = '변환 중...';
 
     // 로컬 스토리지에 저장된 유저 프로필 로드
-    chrome.storage.local.get(['profileTone', 'profileExp', 'profileTarget', 'profileJob', 'profileEpisode', 'profilePersona'], (res) => {
+    const mode = currentDetectedMode;
+    const keys = [
+      'aiProvider',
+      `${mode}_profileTone`,
+      `${mode}_profileExp`,
+      `${mode}_profileTarget`,
+      `${mode}_profileJob`,
+      `${mode}_profileEpisode`,
+      `${mode}_profilePersona`,
+      'profileTone',
+      'profileExp',
+      'profileTarget',
+      'profileJob',
+      'profileEpisode',
+      'resume_profileEpisode',
+      'email_profileEpisode',
+      'sns_profileEpisode'
+    ];
+
+    chrome.storage.local.get(keys, (res) => {
+      const provider = res.aiProvider || 'default_nvidia';
+      if (provider === 'simulation') {
+        alert('AI 모델이 선택되지 않았습니다. 설정 페이지(⚙️)에서 사용할 AI 모델(OpenAI, Gemini 등)을 먼저 선택하고 API 키를 등록해주세요.');
+        // 로딩바 및 버튼 복원
+        if (resultView) resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
+        transformBtn.disabled = false;
+        transformBtn.style.opacity = '1';
+        transformBtn.innerText = '자연화 변환';
+        return;
+      }
+
       const profile = {
-        tone: res.profileTone || '',
-        experience: res.profileExp || '',
-        target: res.profileTarget || '',
-        job: res.profileJob || '',
-        episode: res.profileEpisode || ''
+        tone: (profileTone ? profileTone.value : '') || res[`${mode}_profileTone`] || res['profileTone'] || '',
+        experience: (profileExp ? profileExp.value : '') || res[`${mode}_profileExp`] || res['profileExp'] || '',
+        target: (profileTarget ? profileTarget.value : '') || res[`${mode}_profileTarget`] || res['profileTarget'] || '',
+        job: (profileJob ? profileJob.value : '') || res[`${mode}_profileJob`] || res['profileJob'] || '',
+        episode: (profileEpisode ? profileEpisode.value : '') || res[`${mode}_profileEpisode`] || res['profileEpisode'] || res['resume_profileEpisode'] || res['email_profileEpisode'] || res['sns_profileEpisode'] || ''
       };
-      const persona = res.profilePersona || 'professor';
+      const persona = res[`${mode}_profilePersona`] || 'professor';
 
       // 0. 확장 프로그램 컨텍스트 유효성 검사
-      if (!chrome.runtime || !chrome.runtime.id) {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
         alert('확장 프로그램 연결이 끊어졌습니다. 페이지를 새로고침해주세요.');
         // 로딩바 및 버튼 복원
-        if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+        if (resultView) resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
         transformBtn.disabled = false;
         transformBtn.style.opacity = '1';
         transformBtn.innerText = '자연화 변환';
@@ -1383,12 +1432,17 @@ function bindSidebarEvents(shadow) {
 
           if (chrome.runtime.lastError) {
             alert('백그라운드 서비스 워커와의 통신 실패. 페이지를 새로고침한 후 다시 시도해 주세요.');
-            if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+            if (resultView) resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
             return;
           }
           if (!response || !response.success) {
-            alert('변환 요청 중 오류가 발생했습니다.');
-            if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+            const errMsg = response ? response.error : '알 수 없는 오류';
+            if (errMsg.includes('403') || errMsg.includes('Forbidden')) {
+              alert('NVIDIA 기본 연동 키의 무료 크레딧이 만료되었거나 비활성화 상태입니다. 설정(⚙️)으로 가셔서 [Google Gemini] 또는 [OpenAI] 제공사를 선택하고 본인의 API Key를 입력하여 무료/유료 서비스를 즉시 전환해 주십시오.');
+            } else {
+              alert(`변환 요청 중 오류가 발생했습니다:\n${errMsg}`);
+            }
+            if (resultView) resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
             return;
           }
 
@@ -1420,7 +1474,7 @@ function bindSidebarEvents(shadow) {
             transformBtn.disabled = false;
             transformBtn.style.opacity = '1';
             transformBtn.innerText = '자연화 변환';
-            if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+            if (resultView) resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
             alert('백그라운드 연결 오류가 발생했습니다. 페이지를 새로고침해주세요.');
           });
         }
@@ -1430,7 +1484,7 @@ function bindSidebarEvents(shadow) {
         transformBtn.disabled = false;
         transformBtn.style.opacity = '1';
         transformBtn.innerText = '자연화 변환';
-        if (resultView) resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+        if (resultView) resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
       }
     });
   });
@@ -1530,11 +1584,17 @@ function updateSidebarModeUI(mode, confidence) {
   const modeSelect = shadow.getElementById('cdp-mode-select');
   const confidenceBadge = shadow.getElementById('cdp-confidence-badge');
 
-  if (modeSelect) modeSelect.value = mode;
-  if (confidenceBadge) {
-    confidenceBadge.innerText = `신뢰도: ${confidence}%`;
+  if (modeSelect) {
+    const prevMode = modeSelect.value;
+    modeSelect.value = mode;
+    if (confidenceBadge) {
+      confidenceBadge.innerText = `신뢰도: ${confidence}%`;
+    }
+    // 실제 작성 모드가 변경되었을 때만 스토리지에서 새로운 모드 데이터를 불러와 필드를 갱신(덮어쓰기)합니다.
+    if (prevMode !== mode) {
+      updateProfileFields(shadow, mode);
+    }
   }
-  updateProfileFields(shadow, mode);
 }
 
 /**
@@ -1611,12 +1671,13 @@ function updateProfileFields(shadow, mode) {
     `${mode}_profileEpisode`,
     `${mode}_profilePersona`
   ], (res) => {
-    profileTone.value = res[`${mode}_profileTone`] || '';
-    profileExp.value = res[`${mode}_profileExp`] || '';
-    profileTarget.value = res[`${mode}_profileTarget`] || '';
-    profileJob.value = res[`${mode}_profileJob`] || '';
-    profileEpisode.value = res[`${mode}_profileEpisode`] || '';
-    profilePersona.value = res[`${mode}_profilePersona`] || 'professor';
+    const activeEl = shadow.activeElement;
+    if (activeEl !== profileTone) profileTone.value = res[`${mode}_profileTone`] || '';
+    if (activeEl !== profileExp) profileExp.value = res[`${mode}_profileExp`] || '';
+    if (activeEl !== profileTarget) profileTarget.value = res[`${mode}_profileTarget`] || '';
+    if (activeEl !== profileJob) profileJob.value = res[`${mode}_profileJob`] || '';
+    if (activeEl !== profileEpisode) profileEpisode.value = res[`${mode}_profileEpisode`] || '';
+    if (activeEl !== profilePersona) profilePersona.value = res[`${mode}_profilePersona`] || 'professor';
   });
 }
 
@@ -1627,9 +1688,7 @@ function renderHumanizedResult(shadow, text, warnings) {
   const resultView = shadow.getElementById('cdp-humanized-result');
   if (!resultView) return;
 
-  // 개선된 어휘나 문맥 단어들을 연한 민트색 배경으로 하이라이팅하는 모크 렌더러
-  let html = text
-    .replace(/(할 수 있었습니다|프로세스를 효율적으로|정중하고 부드러운|자연스럽게|성장하며|역량이|전문성은|신뢰감을|정중하고|요청이나|피드백이|협업을|이끌어내도록|몸에 익힐|자리 잡았습니다|도출하는 데|보완하여|극대화할 수)/g, '<span class="cdp-highlight">$1</span>');
+  let html = text;
 
   // 경고 알림 문구가 존재할 시 상단 경고 배너 삽입
   if (warnings && warnings.length > 0) {
@@ -1637,7 +1696,9 @@ function renderHumanizedResult(shadow, text, warnings) {
     html = warningBanner + html;
   }
 
-  resultView.innerHTML = html;
+  // 문맥에 맞게 개행 문자(\n)를 HTML br 태그로 변경하여 줄바꿈 적용
+  const formattedHtml = html.replace(/\n/g, '<br/>');
+  resultView.innerHTML = formattedHtml;
 }
 
 /**

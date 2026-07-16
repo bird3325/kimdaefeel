@@ -211,11 +211,11 @@
       word-break: break-all;
     }
     .cdp-highlight {
-      background-color: rgba(20, 184, 166, 0.15);
-      border-bottom: 2px solid rgba(20, 184, 166, 0.4);
-      padding: 0 2px;
-      border-radius: 2px;
-      font-weight: 500;
+      background-color: rgba(13, 148, 136, 0.25);
+      border-bottom: 2px solid #0D9488;
+      padding: 1px 3px;
+      border-radius: 4px;
+      font-weight: 600;
       color: #0F766E;
     }
 
@@ -487,7 +487,7 @@
   <!-- 헤더 -->
   <div class="cdp-header">
     <h3 class="cdp-header-title">
-      <img src="icons/icon24.png" width="18" height="18" alt="로고" style="vertical-align: middle; margin-right: 4px; object-fit: contain;">
+      <img src="icons/top_logo.png" width="20" height="20" alt="로고" style="display: block; object-fit: contain; transform: translateY(2px);">
       김대필 (새창 모드)
     </h3>
     <div class="cdp-header-controls">
@@ -558,9 +558,9 @@
       <p class="cdp-section-title">AI 초안 자연화 (Humanize)</p>
       
       <div class="cdp-textarea-wrapper">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <label class="cdp-label">Original AI 초안</label>
-          <span id="cdp-orig-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <label class="cdp-label" style="white-space: nowrap; flex-shrink: 0;">Original AI 초안</label>
+          <span id="cdp-orig-char-count" style="font-size: 11px; color: #6B7280; white-space: nowrap; flex-shrink: 0; text-align: right; line-height: 1.3;">0자<br>(공백 제외 0자)</span>
         </div>
         <textarea class="cdp-textarea" id="cdp-original-input" placeholder="여기에 어색한 AI 초안을 입력하거나 문장을 작성하세요."></textarea>
       </div>
@@ -587,11 +587,11 @@
       </div>
 
       <div class="cdp-textarea-wrapper">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <label class="cdp-label">Humanized 결과 (민트색: 개선된 문맥)</label>
-          <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280;">0자 (공백 제외 0자)</span>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <label class="cdp-label" style="white-space: nowrap; flex-shrink: 0;">Humanized 결과</label>
+          <span id="cdp-result-char-count" style="font-size: 11px; color: #6B7280; white-space: nowrap; flex-shrink: 0; text-align: right; line-height: 1.3;">0자<br>(공백 제외 0자)</span>
         </div>
-        <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.</div>
+        <div class="cdp-result-view" id="cdp-humanized-result">변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.</div>
         <div id="cdp-model-badge-container" style="display: flex; justify-content: flex-end; margin-top: 6px; margin-bottom: 2px;">
           <span id="cdp-model-badge" style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #64748B; background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 2px 8px; border-radius: 9999px; font-weight: 600; box-shadow: inset 0 1px 1px rgba(0,0,0,0.02); transition: all 0.2s;">
             <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background-color: #94A3B8;" id="cdp-model-status-dot"></span>

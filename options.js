@@ -9,6 +9,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusMsg = document.getElementById('status-msg');
   const modelHint = document.getElementById('model-hint');
 
+  const DEFAULT_NVIDIA_KEY = "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";
+  const MASKED_KEY_DUMMY = "••••••••••••••••••••••••••••••••";
+
+  // 제공사별 키/모델 임시 캐싱 객체
+  let savedKeys = {
+    openai: '',
+    gemini: '',
+    nvidia: '',
+    default_nvidia: MASKED_KEY_DUMMY
+  };
+
+  let savedModels = {
+    openai: 'gpt-4o-mini',
+    gemini: 'gemini-2.0-flash',
+    nvidia: 'meta/llama-3.3-70b-instruct',
+    default_nvidia: 'nvidia/nemotron-mini-4b-instruct'
+  };
+
   // 제공업체별 기본 추천 모델 힌트 제공 및 추천 가이드 업데이트
   const updateModelPlaceholder = () => {
     const provider = providerSelect.value;
@@ -16,21 +34,41 @@ document.addEventListener('DOMContentLoaded', () => {
     const guideTitle = document.getElementById('rec-guide-title');
     const guideContent = document.getElementById('rec-guide-content');
 
-    if (provider === 'simulation') {
-      document.getElementById('model-group').style.display = 'none';
-      document.getElementById('api-key-group').style.display = 'none';
+    document.getElementById('model-group').style.display = 'block';
+    document.getElementById('api-key-group').style.display = 'block';
+    guideDiv.style.display = 'block';
+    
+    // 제공사 선택에 따른 모델명 및 API 키 활성화/비활성화 통제
+    if (provider === 'default_nvidia') {
+      modelInput.value = 'nvidia/nemotron-mini-4b-instruct'; 
+      modelInput.readOnly = true; // 기본 모델의 모델명 강제 고정 및 수정 불가
+      modelInput.style.backgroundColor = '#F3F4F6';
       
-      guideDiv.style.display = 'block';
-      guideDiv.style.backgroundColor = '#EFF6FF';
-      guideDiv.style.border = '1px solid #BFDBFE';
-      guideDiv.style.color = '#1E3A8A';
-      guideTitle.innerHTML = '💡 기본 로컬 시뮬레이터 안내';
-      guideContent.innerHTML = '오프라인 시뮬레이션 모드입니다. 인터넷 연결 없이 무료로 빠르게 변환 성능을 테스트할 수 있습니다.<br/><span style="font-weight:600; color:#1E40AF;">추천:</span> 한 차원 높은 정밀한 자연화 및 완벽한 한국어 문맥 매칭을 원하신다면 <strong>OpenAI</strong> 또는 <strong>Google Gemini</strong> 연동을 권장합니다.';
+      apiKeyInput.value = MASKED_KEY_DUMMY;
+      apiKeyInput.readOnly = true; // 기본 모델의 API Key 임의 조작/수정 불가 락(Lock)
+      apiKeyInput.style.backgroundColor = '#F3F4F6';
+      
+      modelInput.placeholder = 'nvidia/nemotron-mini-4b-instruct';
+      modelHint.innerText = '기본으로 제공되는 고정형 대필 최적화 AI 모델입니다. (수정 불가)';
+      
+      guideDiv.style.backgroundColor = '#FDF2F8';
+      guideDiv.style.border = '1px solid #FBCFE8';
+      guideDiv.style.color = '#9D174D';
+      guideTitle.innerHTML = '⚡ 기본 모델 (무료 고속 연동) 적용 중';
+      guideContent.innerHTML = `
+        김대필의 내장 전용 망을 통과하여 한도나 이용 제한 없이 자연화 작문을 수행합니다.<br/>
+        <strong>작성 엔진:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 4px; border-radius: 4px;">nvidia/nemotron-mini-4b-instruct</code> (대필 특화 소형 고성능 모델)<br/>
+        <span style="color:#be185d; font-weight:bold;">🔒 보안 보호 규정:</span> 모델명과 연동 키는 외부 유출이나 실수로 인한 변경을 완벽하게 방지하기 위해 쓰기 금지(Read-only) 상태로 운영됩니다.
+      `;
     } else {
-      document.getElementById('model-group').style.display = 'block';
-      document.getElementById('api-key-group').style.display = 'block';
-      guideDiv.style.display = 'block';
+      modelInput.readOnly = false; // 타 제공사는 자유롭게 수정 가능
+      modelInput.style.backgroundColor = '#FFFFFF';
+      modelInput.value = savedModels[provider] || '';
       
+      apiKeyInput.readOnly = false; // 타 제공사 키 기입 가능
+      apiKeyInput.style.backgroundColor = '#FFFFFF';
+      apiKeyInput.value = savedKeys[provider] || '';
+
       if (provider === 'openai') {
         modelInput.placeholder = 'gpt-4o-mini (권장) 또는 gpt-4o';
         modelHint.innerText = 'OpenAI 모델을 입력하세요.';
@@ -71,18 +109,17 @@ document.addEventListener('DOMContentLoaded', () => {
         modelInput.placeholder = 'meta/llama-3.3-70b-instruct (권장) 또는 nvidia/nemotron-mini-4b-instruct';
         modelHint.innerText = 'NVIDIA NIM API 카탈로그 내의 사용 가능한 모델명을 입력하세요.';
         
-        guideDiv.style.backgroundColor = '#FDF2F8';
-        guideDiv.style.border = '1px solid #FBCFE8';
-        guideDiv.style.color = '#9D174D';
-        guideTitle.innerHTML = '⚡ NVIDIA NIM API 추천 가이드';
+        guideDiv.style.backgroundColor = '#F5F5F5';
+        guideDiv.style.border = '1px solid #E5E5E5';
+        guideDiv.style.color = '#404040';
+        guideTitle.innerHTML = '⚡ NVIDIA NIM (사용자 지정 키 연동) 가이드';
         guideContent.innerHTML = `
-          NVIDIA 카탈로그 내 최신 오픈소스 초거대 모델(LLM)을 연구/활용하고자 할 때 권장합니다.<br/>
-          <strong>추천 모델:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 4px; border-radius: 4px;">meta/llama-3.3-70b-instruct</code> (최신 고성능 추론 모델) 또는 <code style="background: rgba(0,0,0,0.05); padding: 2px 4px; border-radius: 4px;">nvidia/nemotron-mini-4b-instruct</code> (NVIDIA 튜닝 RAG/글쓰기 특화 모델)<br/>
-          <strong style="color:#be185d; display:inline-block; margin-top:10px; margin-bottom: 4px;">🔑 API 키 발급 상세 절차:</strong>
+          NVIDIA NIM 카탈로그의 오픈소스 모델 중 다른 거대 인공지능(Llama-3.3-70B 등)을 수동 기재하여 연구용으로 연동할 때 사용합니다.<br/>
+          <strong>추천 모델:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 4px; border-radius: 4px;">meta/llama-3.3-70b-instruct</code> (NVIDIA NIM 제공 대형 모델)<br/>
+          <strong style="color:#404040; display:inline-block; margin-top:10px; margin-bottom: 4px;">🔑 API 키 발급 상세 절차:</strong>
           <ol style="margin: 0; padding-left: 18px; line-height: 1.6; font-size: 12.5px;">
-            <li><a href="https://build.nvidia.com/" target="_blank" style="color: #be185d; font-weight: bold; text-decoration: underline;">NVIDIA NIM Catalog 사이트</a>에 로그인합니다.</li>
-            <li>원하는 모델 상세 페이지로 진입하여 우측 상단의 <strong>[Get API Key]</strong> ➔ <strong>[Generate Key]</strong>를 클릭합니다.</li>
-            <li>첫 가입 시 1,000회 내외로 무료 호출이 가능한 테스트 크레딧이 기본 제공되어 무료 체험이 가능합니다.</li>
+            <li><a href="https://build.nvidia.com/" target="_blank" style="color: #404040; font-weight: bold; text-decoration: underline;">NVIDIA NIM Catalog 사이트</a>에 로그인합니다.</li>
+            <li>원하는 모델 상세 페이지에서 우측 상단의 <strong>[Get API Key]</strong>를 클릭해 발급하여 본인의 키를 입력합니다.</li>
           </ol>
         `;
       }
@@ -91,26 +128,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
   providerSelect.addEventListener('change', updateModelPlaceholder);
 
+  apiKeyInput.addEventListener('input', () => {
+    const provider = providerSelect.value;
+    if (provider !== 'default_nvidia') {
+      savedKeys[provider] = apiKeyInput.value.trim();
+    }
+  });
+
+  modelInput.addEventListener('input', () => {
+    const provider = providerSelect.value;
+    if (provider !== 'default_nvidia') {
+      savedModels[provider] = modelInput.value.trim();
+    }
+  });
+
   // 저장된 설정 불러오기
   const saveHistoryCheckbox = document.getElementById('save-history-enabled');
 
   chrome.storage.local.get(['aiProvider', 'aiModel', 'apiKey', 'factProtectionPolicy', 'saveHistoryEnabled'], (res) => {
+    // 기본제공사: default_nvidia
     if (res.aiProvider) {
       providerSelect.value = res.aiProvider;
     } else {
-      providerSelect.value = 'simulation';
+      providerSelect.value = 'default_nvidia';
     }
     
+    // 기본모델 매핑
     if (res.aiModel) {
-      modelInput.value = res.aiModel;
-    } else {
-      modelInput.value = '';
+      savedModels[res.aiProvider || 'default_nvidia'] = res.aiModel;
     }
 
+    // 내장 키 분기 캐싱 및 유효 수동 키 보존 매핑
     if (res.apiKey) {
-      apiKeyInput.value = res.apiKey;
-    } else {
-      apiKeyInput.value = '';
+      if (res.apiKey === DEFAULT_NVIDIA_KEY) {
+        savedKeys[res.aiProvider || 'default_nvidia'] = MASKED_KEY_DUMMY;
+      } else {
+        savedKeys[res.aiProvider || 'default_nvidia'] = res.apiKey;
+        // 기본 모델 모드에서도 사용자가 수동 저장해 둔 유효 키가 존재한다면 DUMMY 대신 그 키를 보존 매핑
+        savedKeys.default_nvidia = res.apiKey;
+      }
     }
 
     if (res.factProtectionPolicy !== undefined) {
@@ -133,20 +189,39 @@ document.addEventListener('DOMContentLoaded', () => {
   btnSave.addEventListener('click', () => {
     const provider = providerSelect.value;
     const model = modelInput.value.trim();
-    const apiKey = apiKeyInput.value.trim();
+    let apiKey = apiKeyInput.value.trim();
     const factPolicy = factPolicyInput.value;
 
-    if (provider !== 'simulation' && !apiKey) {
-      alert('API 키를 입력해주세요.');
-      return;
+    // 마스킹 DUMMY 문자 그대로 저장하거나 비어있으면 스토리지에는 내장 키로 대입
+    if (apiKey === MASKED_KEY_DUMMY || !apiKey) {
+      if (provider === 'default_nvidia' || provider === 'nvidia') {
+        // 기존 스토리지에 사용자가 수동 저장한 유효 키가 있는지 먼저 검사하여 보존
+        chrome.storage.local.get(['apiKey'], (storageRes) => {
+          const existingKey = storageRes.apiKey;
+          if (existingKey && existingKey !== DEFAULT_NVIDIA_KEY && existingKey !== MASKED_KEY_DUMMY && existingKey.trim() !== '') {
+            apiKey = existingKey;
+          } else {
+            apiKey = DEFAULT_NVIDIA_KEY;
+          }
+          saveSettings(provider, model, apiKey, factPolicy);
+        });
+        return;
+      } else if (!apiKey) {
+        alert('API 키를 입력해주세요.');
+        return;
+      }
     }
 
+    saveSettings(provider, model, apiKey, factPolicy);
+  });
+
+  function saveSettings(provider, model, apiKey, factPolicy) {
     // 기본 모델 자동 설정
     let finalModel = model;
-    if (!finalModel && provider !== 'simulation') {
+    if (!finalModel || provider === 'default_nvidia') {
       if (provider === 'openai') finalModel = 'gpt-4o-mini';
       if (provider === 'gemini') finalModel = 'gemini-2.0-flash';
-      if (provider === 'nvidia') finalModel = 'meta/llama-3.3-70b-instruct';
+      if (provider === 'nvidia' || provider === 'default_nvidia') finalModel = 'nvidia/nemotron-mini-4b-instruct';
     }
 
     const saveHistory = saveHistoryCheckbox.checked;
@@ -166,7 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusMsg.style.display = 'none';
       }, 2500);
     });
-  });
+  }
 
   // 탭 전환 기능 바인딩 (Manifest V3 CSP 준수)
   const menuItems = document.querySelectorAll('.sidebar-menu-item');

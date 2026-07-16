@@ -66,12 +66,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const origText = originalInput.value || '';
     const origCharCount = origText.length;
     const origCharNoSpaceCount = origText.replace(/\s/g, '').length;
-    document.getElementById('cdp-orig-char-count').innerText = `${origCharCount}자 (공백 제외 ${origCharNoSpaceCount}자)`;
+    document.getElementById('cdp-orig-char-count').innerHTML = `${origCharCount}자<br>(공백 제외 ${origCharNoSpaceCount}자)`;
 
     const resultText = latestHumanizedText || '';
     const resultCharCount = resultText.length;
     const resultCharNoSpaceCount = resultText.replace(/\s/g, '').length;
-    document.getElementById('cdp-result-char-count').innerText = `${resultCharCount}자 (공백 제외 ${resultCharNoSpaceCount}자)`;
+    document.getElementById('cdp-result-char-count').innerHTML = `${resultCharCount}자<br>(공백 제외 ${resultCharNoSpaceCount}자)`;
   };
   originalInput.addEventListener('input', updateCharCounts);
 
@@ -130,15 +130,51 @@ document.addEventListener('DOMContentLoaded', () => {
     transformBtn.innerText = '변환 중...';
 
     // 스토리지 프로필 로드 후 백그라운드로 전달
-    chrome.storage.local.get(['profileTone', 'profileExp', 'profileTarget', 'profileJob', 'profileEpisode', 'profilePersona'], (res) => {
+    const mode = currentDetectedMode;
+    const keys = [
+      'aiProvider',
+      `${mode}_profileTone`,
+      `${mode}_profileExp`,
+      `${mode}_profileTarget`,
+      `${mode}_profileJob`,
+      `${mode}_profileEpisode`,
+      `${mode}_profilePersona`,
+      'profileTone',
+      'profileExp',
+      'profileTarget',
+      'profileJob',
+      'profileEpisode',
+      'resume_profileEpisode',
+      'email_profileEpisode',
+      'sns_profileEpisode'
+    ];
+
+    chrome.storage.local.get(keys, (res) => {
+      const provider = res.aiProvider || 'default_nvidia';
+      if (provider === 'simulation') {
+        alert('AI 모델이 선택되지 않았습니다. 설정 페이지(⚙️)에서 사용할 AI 모델(OpenAI, Gemini 등)을 먼저 선택하고 API 키를 등록해주세요.');
+        // 로딩바 및 버튼 상태 즉시 복원
+        resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
+        transformBtn.disabled = false;
+        transformBtn.style.opacity = '1';
+        transformBtn.innerText = '자연화 변환';
+        return;
+      }
+
+      const pTone = document.getElementById('cdp-profile-tone');
+      const pExp = document.getElementById('cdp-profile-exp');
+      const pTarget = document.getElementById('cdp-profile-target');
+      const pJob = document.getElementById('cdp-profile-job');
+      const pEpisode = document.getElementById('cdp-profile-episode');
+
       const profile = {
-        tone: res.profileTone || '',
-        experience: res.profileExp || '',
-        target: res.profileTarget || '',
-        job: res.profileJob || '',
-        episode: res.profileEpisode || ''
+        tone: (pTone ? pTone.value : '') || res[`${mode}_profileTone`] || res['profileTone'] || '',
+        experience: (pExp ? pExp.value : '') || res[`${mode}_profileExp`] || res['profileExp'] || '',
+        target: (pTarget ? pTarget.value : '') || res[`${mode}_profileTarget`] || res['profileTarget'] || '',
+        job: (pJob ? pJob.value : '') || res[`${mode}_profileJob`] || res['profileJob'] || '',
+        episode: (pEpisode ? pEpisode.value : '') || res[`${mode}_profileEpisode`] || res['profileEpisode'] || res['resume_profileEpisode'] || res['email_profileEpisode'] || res['sns_profileEpisode'] || ''
       };
-      const persona = res.profilePersona || 'professor';
+      const persona = res[`${mode}_profilePersona`] || 'professor';
 
       const customInstruction = document.getElementById('cdp-custom-instruction') ? document.getElementById('cdp-custom-instruction').value : '';
 
@@ -159,8 +195,13 @@ document.addEventListener('DOMContentLoaded', () => {
         transformBtn.innerText = '자연화 변환';
 
         if (chrome.runtime.lastError || !response || !response.success) {
-          alert('변환 실패. 다시 시도해 주세요.');
-          resultView.innerHTML = '변환을 실행하면 여기에 인간다운 자연스러운 문장으로 변환되어 나타납니다.';
+          const errMsg = response ? response.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : '알 수 없는 오류');
+          if (errMsg.includes('403') || errMsg.includes('Forbidden')) {
+            alert('NVIDIA 기본 연동 키의 무료 크레딧이 만료되었거나 비활성화 상태입니다. 설정(⚙️)으로 가셔서 [Google Gemini] 또는 [OpenAI] 제공사를 선택하고 본인의 API Key를 입력하여 무료/유료 서비스를 즉시 전환해 주십시오.');
+          } else {
+            alert(`변환 실패: ${errMsg}`);
+          }
+          resultView.innerHTML = '변환을 실행하시면 김대필의 정교한 교정을 거쳐 목적에 맞게 다듬어진 설득력 있는 문장이 이곳에 나타납니다.';
           return;
         }
 
@@ -369,8 +410,7 @@ function updateProfileFields(mode) {
 function renderHumanizedResult(text, warnings) {
   const resultView = document.getElementById('cdp-humanized-result');
   if (!resultView) return;
-  let html = text
-    .replace(/(할 수 있었습니다|프로세스를 효율적으로|정중하고 부드러운|자연스럽게|성장하며|역량이|전문성은|신뢰감을|정중하고|요청이나|피드백이|협업을|이끌어내도록|몸에 익힐|자리 잡았습니다|도출하는 데|보완하여|극대화할 수)/g, '<span class="cdp-highlight">$1</span>');
+  let html = text;
 
   // 경고 알림 문구가 존재할 시 상단 경고 배너 삽입
   if (warnings && warnings.length > 0) {
@@ -378,7 +418,9 @@ function renderHumanizedResult(text, warnings) {
     html = warningBanner + html;
   }
 
-  resultView.innerHTML = html;
+  // 문맥에 맞게 개행 문자(\n)를 HTML br 태그로 변경하여 줄바꿈 적용
+  const formattedHtml = html.replace(/\n/g, '<br/>');
+  resultView.innerHTML = formattedHtml;
 }
 
 // 대시보드 게이지 업데이트

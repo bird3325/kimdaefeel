@@ -5,7 +5,8 @@
   "description": "사용자의 웹서핑 맥락을 감지하고, 자연스러운 인간의 글로 AI 초안을 변환하는 AI 글쓰기 비서",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "contextMenus"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -38,7 +39,9 @@
         "icons/icon16.png",
         "icons/icon24.png",
         "icons/icon48.png",
-        "icons/icon128.png"
+        "icons/icon128.png",
+        "icons/top_logo.png",
+        "icons/flogo.png"
       ],
       "matches": [
         "<all_urls>"
